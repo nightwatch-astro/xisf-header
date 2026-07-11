@@ -10,6 +10,7 @@ use quick_xml::{Reader, XmlVersion};
 use crate::error::{Error, Result};
 use crate::header::Header;
 use crate::keyword::FitsKeyword;
+use crate::property::Property;
 use crate::value::Value;
 
 /// The 8-byte XISF monolithic-file signature.
@@ -92,22 +93,73 @@ impl Header {
     }
 }
 
+/// A `<Property>` opened as a start tag, which may carry its value as child
+/// text (the XISF long form for `String` properties) instead of a `value`
+/// attribute.
+struct OpenProperty {
+    id: Option<String>,
+    prop: Property,
+    has_value_attr: bool,
+}
+
 /// Extract keywords and properties from the decoded XML header.
 fn parse_xml(xml: &str) -> Result<Header> {
     let mut reader = Reader::from_str(xml);
     let mut header = Header::new();
+    let mut open_property: Option<OpenProperty> = None;
 
     loop {
         match reader.read_event()? {
-            Event::Start(e) | Event::Empty(e) => {
+            Event::Empty(e) => {
                 let local = e.local_name();
                 let tag = local.as_ref();
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     header.keywords.push(parse_keyword(&e)?);
                 } else if tag.eq_ignore_ascii_case(b"Property") {
-                    if let Some((id, value)) = parse_property(&e)? {
-                        header.properties.insert(id, value);
+                    let (id, prop, _) = parse_property(&e)?;
+                    if let Some(id) = id {
+                        header.properties.insert(id, prop);
                     }
+                }
+            }
+            Event::Start(e) => {
+                let local = e.local_name();
+                let tag = local.as_ref();
+                if tag.eq_ignore_ascii_case(b"FITSKeyword") {
+                    header.keywords.push(parse_keyword(&e)?);
+                } else if tag.eq_ignore_ascii_case(b"Property") {
+                    let (id, prop, has_value_attr) = parse_property(&e)?;
+                    open_property = Some(OpenProperty {
+                        id,
+                        prop,
+                        has_value_attr,
+                    });
+                }
+            }
+            Event::Text(t) => {
+                if let Some(open) = open_property.as_mut() {
+                    if !open.has_value_attr {
+                        let text = t
+                            .xml_content(XmlVersion::Implicit1_0)
+                            .map_err(quick_xml::Error::from)?;
+                        open.prop.value.push_str(&text);
+                    }
+                }
+            }
+            Event::CData(c) => {
+                if let Some(open) = open_property.as_mut() {
+                    if !open.has_value_attr {
+                        let text = c.decode().map_err(quick_xml::Error::from)?;
+                        open.prop.value.push_str(&text);
+                    }
+                }
+            }
+            Event::End(e) if e.local_name().as_ref().eq_ignore_ascii_case(b"Property") => {
+                if let Some(OpenProperty {
+                    id: Some(id), prop, ..
+                }) = open_property.take()
+                {
+                    header.properties.insert(id, prop);
                 }
             }
             Event::Eof => break,
@@ -136,20 +188,30 @@ fn parse_keyword(e: &BytesStart) -> Result<FitsKeyword> {
     Ok(kw)
 }
 
-/// Read a `<Property id= value=>` element, returning `None` if it has no `id`.
-fn parse_property(e: &BytesStart) -> Result<Option<(String, String)>> {
+/// Read a `<Property>` element's attributes: `id`, `type`, `value`,
+/// `comment`, and `format`, all kept verbatim (XISF property values are not
+/// FITS-quoted). Returns the id (if any), the property, and whether a `value`
+/// attribute was present (when absent, the value may follow as child text).
+fn parse_property(e: &BytesStart) -> Result<(Option<String>, Property, bool)> {
     let mut id = None;
-    let mut value = String::new();
+    let mut prop = Property::default();
+    let mut has_value_attr = false;
     for attr in e.attributes() {
         let attr = attr?;
         let raw = attr.normalized_value(XmlVersion::Implicit1_0)?;
         match attr.key.as_ref() {
             k if k.eq_ignore_ascii_case(b"id") => id = Some(raw.into_owned()),
-            k if k.eq_ignore_ascii_case(b"value") => value = strip_fits_quotes(&raw).to_owned(),
+            k if k.eq_ignore_ascii_case(b"type") => prop.type_ = raw.into_owned(),
+            k if k.eq_ignore_ascii_case(b"value") => {
+                prop.value = raw.into_owned();
+                has_value_attr = true;
+            }
+            k if k.eq_ignore_ascii_case(b"comment") => prop.comment = raw.into_owned(),
+            k if k.eq_ignore_ascii_case(b"format") => prop.format = raw.into_owned(),
             _ => {}
         }
     }
-    Ok(id.map(|id| (id, value)))
+    Ok((id, prop, has_value_attr))
 }
 
 /// Classify a keyword value attribute: single-quote-wrapped text is a string
@@ -160,15 +222,5 @@ fn classify_value(text: &str) -> Value {
         Value::Str(text[1..text.len() - 1].to_owned())
     } else {
         Value::Literal(text.to_owned())
-    }
-}
-
-/// Strip exactly one layer of FITS single-quote wrapping, if present.
-fn strip_fits_quotes(s: &str) -> &str {
-    let bytes = s.as_bytes();
-    if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
-        &s[1..s.len() - 1]
-    } else {
-        s
     }
 }

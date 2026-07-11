@@ -117,12 +117,17 @@ impl Header {
             w.write_event(Event::Empty(e)).expect(INFALLIBLE);
         }
 
-        for (id, value) in &self.properties {
+        for (id, p) in &self.properties {
             let mut e = BytesStart::new("Property");
             e.push_attribute(("id", id.as_str()));
-            e.push_attribute(("type", "String"));
-            let value = format!("'{value}'");
-            e.push_attribute(("value", value.as_str()));
+            e.push_attribute(("type", p.type_.as_str()));
+            e.push_attribute(("value", p.value.as_str()));
+            if !p.format.is_empty() {
+                e.push_attribute(("format", p.format.as_str()));
+            }
+            if !p.comment.is_empty() {
+                e.push_attribute(("comment", p.comment.as_str()));
+            }
             w.write_event(Event::Empty(e)).expect(INFALLIBLE);
         }
 

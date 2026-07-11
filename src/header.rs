@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::error::{Error, Result};
 use crate::key::Key;
 use crate::keyword::FitsKeyword;
+use crate::property::Property;
 use crate::value::{FromField, IntoValue};
 
 /// Geometry hints used when serializing a standalone container: they populate
@@ -41,7 +42,7 @@ impl Default for StructuralHints {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header {
     pub(crate) keywords: Vec<FitsKeyword>,
-    pub(crate) properties: BTreeMap<String, String>,
+    pub(crate) properties: BTreeMap<String, Property>,
 }
 
 impl Header {
@@ -329,23 +330,27 @@ impl Header {
 
     /// All `<Property>` entries, keyed by `id`.
     #[must_use]
-    pub fn properties(&self) -> &BTreeMap<String, String> {
+    pub fn properties(&self) -> &BTreeMap<String, Property> {
         &self.properties
     }
 
-    /// A property value by `id`.
+    /// A property's raw value text by `id`.
     #[must_use]
     pub fn property(&self, id: &str) -> Option<&str> {
-        self.properties.get(id).map(String::as_str)
+        self.properties.get(id).map(|p| p.value.as_str())
     }
 
     /// A property value interpreted as `T`.
     #[must_use]
     pub fn property_get<T: FromField>(&self, id: &str) -> Option<T> {
-        self.properties.get(id).and_then(|v| T::from_field(v))
+        self.properties
+            .get(id)
+            .and_then(|p| T::from_field(&p.value))
     }
 
-    /// Insert or update a property.
+    /// Insert or update a property's value. An existing property keeps its
+    /// `type`, `comment`, and `format`; a new one is created with type
+    /// `String`.
     ///
     /// # Errors
     ///
@@ -353,7 +358,28 @@ impl Header {
     pub fn set_property(&mut self, id: impl Into<String>, value: impl Into<String>) -> Result<()> {
         let id = id.into();
         Self::validate_property_id(&id)?;
-        self.properties.insert(id, value.into());
+        self.properties.entry(id).or_default().value = value.into();
+        Ok(())
+    }
+
+    /// Insert or update a property with an explicit XISF `type` (e.g.
+    /// `Float32`, `TimePoint`). An existing property keeps its `comment` and
+    /// `format`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidName`] if `id` is not a valid XISF property id.
+    pub fn set_property_with_type(
+        &mut self,
+        id: impl Into<String>,
+        value: impl Into<String>,
+        type_: impl Into<String>,
+    ) -> Result<()> {
+        let id = id.into();
+        Self::validate_property_id(&id)?;
+        let p = self.properties.entry(id).or_default();
+        p.value = value.into();
+        p.type_ = type_.into();
         Ok(())
     }
 
