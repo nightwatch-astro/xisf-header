@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/nightwatch-astro/xisf-header/compare/v0.2.0...v0.2.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* skip FITSKeyword elements without a name attribute ([#3](https://github.com/nightwatch-astro/xisf-header/issues/3)) ([07bd826](https://github.com/nightwatch-astro/xisf-header/commit/07bd82615001291bd5bdbf78eded46a0e86e2c21))
+
 ## [0.2.0](https://github.com/nightwatch-astro/xisf-header/compare/v0.1.0...v0.2.0) (2026-07-11)
 
 
