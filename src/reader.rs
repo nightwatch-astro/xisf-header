@@ -10,6 +10,7 @@ use quick_xml::{Reader, XmlVersion};
 use crate::error::{Error, Result};
 use crate::header::Header;
 use crate::keyword::FitsKeyword;
+use crate::value::Value;
 
 /// The 8-byte XISF monolithic-file signature.
 pub(crate) const SIGNATURE: &[u8; 8] = b"XISF0100";
@@ -126,7 +127,7 @@ fn parse_keyword(e: &BytesStart) -> Result<FitsKeyword> {
         match attr.key.as_ref() {
             k if k.eq_ignore_ascii_case(b"name") => kw.name = value.into_owned(),
             k if k.eq_ignore_ascii_case(b"value") => {
-                kw.value = strip_fits_quotes(&value).to_owned();
+                kw.value = classify_value(&value);
             }
             k if k.eq_ignore_ascii_case(b"comment") => kw.comment = value.into_owned(),
             _ => {}
@@ -149,6 +150,17 @@ fn parse_property(e: &BytesStart) -> Result<Option<(String, String)>> {
         }
     }
     Ok(id.map(|id| (id, value)))
+}
+
+/// Classify a keyword value attribute: single-quote-wrapped text is a string
+/// value (one quote layer stripped); anything else is a bare literal.
+fn classify_value(text: &str) -> Value {
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
+        Value::Str(text[1..text.len() - 1].to_owned())
+    } else {
+        Value::Literal(text.to_owned())
+    }
 }
 
 /// Strip exactly one layer of FITS single-quote wrapping, if present.

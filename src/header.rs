@@ -1,16 +1,42 @@
-//! The [`Header`] value: FITS-keyword and `<Property>` CRUD.
+//! The [`Header`] value, [`StructuralHints`], and the keyword/property API.
 
 use std::collections::BTreeMap;
 
+use crate::error::{Error, Result};
+use crate::key::Key;
 use crate::keyword::FitsKeyword;
+use crate::value::{FromField, IntoValue};
+
+/// Geometry hints used when serializing a standalone container: they populate
+/// the `<Image>` element when the header does not already carry that structure.
+/// Defaults to a minimal 1×1 8-bit grayscale image.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct StructuralHints {
+    /// XISF `geometry` attribute, e.g. `"1:1:1"` (width:height:channels).
+    pub geometry: String,
+    /// XISF `sampleFormat`, e.g. `"UInt8"`.
+    pub sample_format: String,
+    /// XISF `colorSpace`, e.g. `"Gray"`.
+    pub color_space: String,
+}
+
+impl Default for StructuralHints {
+    fn default() -> Self {
+        Self {
+            geometry: "1:1:1".to_owned(),
+            sample_format: "UInt8".to_owned(),
+            color_space: "Gray".to_owned(),
+        }
+    }
+}
 
 /// A parsed XISF header: an ordered list of [`FitsKeyword`]s plus a map of
 /// XISF `<Property>` elements.
 ///
-/// Keyword lookups are **case-insensitive** on the name; keyword *order* is
-/// preserved (FITS allows repeated keywords such as `COMMENT`/`HISTORY`).
-/// Properties are keyed by their `id` and kept in sorted order for stable
-/// serialization.
+/// Keyword access is **strict**: a bare name must be unique, or the accessor
+/// returns [`Error::Ambiguous`]. Repeated keywords are reached with an
+/// `(name, n)` key or the `get_all`/`count` helpers. Keyword order is preserved.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header {
@@ -27,123 +53,276 @@ impl Header {
 
     // ----- keyword reads -------------------------------------------------
 
+    /// Interpret the addressed keyword's value as `T`.
+    ///
+    /// Returns `Ok(None)` when the keyword is absent or its value cannot be read
+    /// as `T`, and [`Error::Ambiguous`] when a bare name matches more than one
+    /// keyword.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Ambiguous`] on a duplicated bare name; [`Error::IndexOutOfRange`]
+    /// for an `(name, n)` index past the last occurrence.
+    pub fn get<'a, T: FromField>(&self, key: impl Into<Key<'a>>) -> Result<Option<T>> {
+        Ok(self
+            .resolve(key.into())?
+            .and_then(|i| self.keywords[i].get::<T>()))
+    }
+
+    /// The addressed keyword's raw value text.
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::get`].
+    pub fn get_str<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<&str>> {
+        Ok(self
+            .resolve(key.into())?
+            .map(|i| self.keywords[i].value_str()))
+    }
+
+    /// The addressed keyword's value as an `f64`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::get`].
+    pub fn get_f64<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<f64>> {
+        self.get(key)
+    }
+
+    /// The addressed keyword's value as an `i64` (accepts `20` and `20.0`).
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::get`].
+    pub fn get_i64<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<i64>> {
+        self.get(key)
+    }
+
+    /// The addressed keyword's value as a `u32`.
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::get`].
+    pub fn get_u32<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<u32>> {
+        self.get(key)
+    }
+
+    /// The addressed keyword's value as a `bool` (FITS `T`/`F`).
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::get`].
+    pub fn get_bool<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<bool>> {
+        self.get(key)
+    }
+
+    /// The addressed keyword's value as a civil date/time.
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::get`].
+    pub fn get_datetime<'a>(
+        &self,
+        key: impl Into<Key<'a>>,
+    ) -> Result<Option<time::PrimitiveDateTime>> {
+        self.get(key)
+    }
+
+    /// Every value for `name`, in order, that reads as `T`.
+    pub fn get_all<T: FromField>(&self, name: &str) -> Vec<T> {
+        self.indices(name)
+            .filter_map(|i| self.keywords[i].get::<T>())
+            .collect()
+    }
+
+    /// How many keywords carry `name` (case-insensitive).
+    #[must_use]
+    pub fn count(&self, name: &str) -> usize {
+        self.indices(name).count()
+    }
+
     /// All keywords in document order.
     #[must_use]
     pub fn keywords(&self) -> &[FitsKeyword] {
         &self.keywords
     }
 
-    /// The first keyword with the given name (case-insensitive), if any.
-    #[must_use]
-    pub fn keyword(&self, name: &str) -> Option<&FitsKeyword> {
-        self.keywords
-            .iter()
-            .find(|k| k.name.eq_ignore_ascii_case(name))
-    }
-
-    /// Every keyword with the given name (case-insensitive), in order.
-    pub fn get_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a FitsKeyword> {
-        self.keywords
-            .iter()
-            .filter(move |k| k.name.eq_ignore_ascii_case(name))
-    }
-
-    /// The first matching keyword's raw value.
-    #[must_use]
-    pub fn get(&self, name: &str) -> Option<&str> {
-        self.keyword(name).map(FitsKeyword::as_str)
-    }
-
-    /// The first matching keyword's value as a string slice.
-    #[must_use]
-    pub fn get_str(&self, name: &str) -> Option<&str> {
-        self.get(name)
-    }
-
-    /// The first matching keyword's value parsed as an `i64`.
-    #[must_use]
-    pub fn get_i64(&self, name: &str) -> Option<i64> {
-        self.keyword(name).and_then(FitsKeyword::as_i64)
-    }
-
-    /// The first matching keyword's value parsed as an `f64`.
-    #[must_use]
-    pub fn get_f64(&self, name: &str) -> Option<f64> {
-        self.keyword(name).and_then(FitsKeyword::as_f64)
-    }
-
-    /// The first matching keyword's value parsed as a `bool`.
-    #[must_use]
-    pub fn get_bool(&self, name: &str) -> Option<bool> {
-        self.keyword(name).and_then(FitsKeyword::as_bool)
+    /// Iterate the keywords in document order.
+    pub fn iter(&self) -> std::slice::Iter<'_, FitsKeyword> {
+        self.keywords.iter()
     }
 
     // ----- keyword writes ------------------------------------------------
 
-    /// Upsert a keyword: update the first case-insensitive match in place, or
-    /// insert a new keyword if none exists.
+    /// Set a keyword's value: update in place when the name is unique, append
+    /// when absent. The existing comment is preserved.
     ///
-    /// ```
-    /// use xisf_header::Header;
-    /// let mut h = Header::new();
-    /// h.set("IMAGETYP", "Master Dark", "Type of image");
-    /// h.set("IMAGETYP", "Light", ""); // updates the existing keyword
-    /// assert_eq!(h.get_str("imagetyp"), Some("Light"));
-    /// ```
-    pub fn set(
+    /// # Errors
+    ///
+    /// [`Error::Ambiguous`] when a bare name is duplicated (use `(name, n)` or
+    /// `set_at`-style selection), [`Error::IndexOutOfRange`] for a bad occurrence
+    /// index, or [`Error::InvalidName`] when creating an invalid keyword.
+    pub fn set<'a>(&mut self, key: impl Into<Key<'a>>, value: impl IntoValue) -> Result<()> {
+        let key = key.into();
+        let value = value.into_value();
+        match key {
+            Key::Name(name) => match self.resolve(Key::Name(name))? {
+                Some(i) => self.keywords[i].value = value,
+                None => {
+                    Self::validate_name(name)?;
+                    self.keywords.push(FitsKeyword {
+                        name: name.to_owned(),
+                        value,
+                        comment: String::new(),
+                    });
+                }
+            },
+            Key::Nth(name, n) => {
+                let i = self.require_nth(name, n)?;
+                self.keywords[i].value = value;
+            }
+        }
+        Ok(())
+    }
+
+    /// Append a keyword unconditionally (allowing duplicate names). This is how
+    /// commentary keywords such as `HISTORY` are built up.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidName`] if `name` is not a valid keyword.
+    pub fn append(&mut self, name: &str, value: impl IntoValue) -> Result<()> {
+        Self::validate_name(name)?;
+        self.keywords.push(FitsKeyword {
+            name: name.to_owned(),
+            value: value.into_value(),
+            comment: String::new(),
+        });
+        Ok(())
+    }
+
+    /// Set (or clear, with `""`) the comment on the addressed keyword.
+    /// Returns `true` if a keyword was found.
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::set`].
+    pub fn set_comment<'a>(
         &mut self,
-        name: impl Into<String>,
-        value: impl Into<String>,
+        key: impl Into<Key<'a>>,
         comment: impl Into<String>,
-    ) {
-        let name = name.into();
-        let value = value.into();
-        let comment = comment.into();
-        if let Some(existing) = self
-            .keywords
-            .iter_mut()
-            .find(|k| k.name.eq_ignore_ascii_case(&name))
-        {
-            existing.value = value;
-            existing.comment = comment;
-        } else {
-            self.keywords.push(FitsKeyword::new(name, value, comment));
+    ) -> Result<bool> {
+        match self.resolve(key.into())? {
+            Some(i) => {
+                self.keywords[i].comment = comment.into();
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
-    /// Append a keyword unconditionally (allowing duplicate names).
-    pub fn push(&mut self, keyword: FitsKeyword) {
-        self.keywords.push(keyword);
-    }
-
-    /// Append many keywords unconditionally.
-    pub fn extend<I: IntoIterator<Item = FitsKeyword>>(&mut self, keywords: I) {
-        self.keywords.extend(keywords);
-    }
-
-    /// Remove the first keyword with the given name (case-insensitive).
+    /// Set a keyword's value and comment together.
     ///
-    /// Returns `true` if a keyword was removed.
-    pub fn remove(&mut self, name: &str) -> bool {
-        if let Some(idx) = self
-            .keywords
-            .iter()
-            .position(|k| k.name.eq_ignore_ascii_case(name))
-        {
-            self.keywords.remove(idx);
-            true
-        } else {
-            false
+    /// # Errors
+    ///
+    /// See [`Header::set`].
+    pub fn set_with_comment<'a>(
+        &mut self,
+        key: impl Into<Key<'a>>,
+        value: impl IntoValue,
+        comment: impl Into<String>,
+    ) -> Result<()> {
+        let key = key.into();
+        self.set(key, value)?;
+        if let Some(i) = self.resolve(key)? {
+            self.keywords[i].comment = comment.into();
+        }
+        Ok(())
+    }
+
+    /// Remove the addressed keyword. Returns `true` if one was removed.
+    ///
+    /// # Errors
+    ///
+    /// See [`Header::set`].
+    pub fn remove<'a>(&mut self, key: impl Into<Key<'a>>) -> Result<bool> {
+        match self.resolve(key.into())? {
+            Some(i) => {
+                self.keywords.remove(i);
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
-    /// Remove every keyword with the given name (case-insensitive).
-    ///
-    /// Returns the number of keywords removed.
+    /// Remove every keyword named `name`. Returns how many were removed.
     pub fn remove_all(&mut self, name: &str) -> usize {
         let before = self.keywords.len();
         self.keywords.retain(|k| !k.name.eq_ignore_ascii_case(name));
         before - self.keywords.len()
+    }
+
+    /// Apply several single-keyword upserts atomically: validate every entry
+    /// first, then apply all — or, on any rejection, apply none.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidName`] or [`Error::Ambiguous`] for any entry; on error the
+    /// header is unchanged.
+    pub fn set_many<'a, V, I>(&mut self, entries: I) -> Result<()>
+    where
+        V: IntoValue,
+        I: IntoIterator<Item = (&'a str, V)>,
+    {
+        let entries: Vec<(&str, V)> = entries.into_iter().collect();
+        for (name, _) in &entries {
+            Self::validate_name(name)?;
+            let count = self.count(name);
+            if count > 1 {
+                return Err(Error::Ambiguous {
+                    name: (*name).to_owned(),
+                    count,
+                });
+            }
+        }
+        for (name, value) in entries {
+            match self.first_index(name) {
+                Some(i) => self.keywords[i].value = value.into_value(),
+                None => self.keywords.push(FitsKeyword {
+                    name: name.to_owned(),
+                    value: value.into_value(),
+                    comment: String::new(),
+                }),
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove several keywords atomically. Returns how many were removed.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Ambiguous`] if any name is duplicated; on error the header is
+    /// unchanged.
+    pub fn remove_many<'a, I: IntoIterator<Item = &'a str>>(&mut self, names: I) -> Result<usize> {
+        let names: Vec<&str> = names.into_iter().collect();
+        for name in &names {
+            let count = self.count(name);
+            if count > 1 {
+                return Err(Error::Ambiguous {
+                    name: (*name).to_owned(),
+                    count,
+                });
+            }
+        }
+        let mut removed = 0;
+        for name in names {
+            if let Some(i) = self.first_index(name) {
+                self.keywords.remove(i);
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     // ----- property CRUD -------------------------------------------------
@@ -154,31 +333,128 @@ impl Header {
         &self.properties
     }
 
-    /// A property value by `id` (exact match).
+    /// A property value by `id`.
     #[must_use]
     pub fn property(&self, id: &str) -> Option<&str> {
         self.properties.get(id).map(String::as_str)
     }
 
-    /// A property value parsed as an `i64`.
+    /// A property value interpreted as `T`.
     #[must_use]
-    pub fn property_i64(&self, id: &str) -> Option<i64> {
-        self.property(id).and_then(|v| v.trim().parse().ok())
-    }
-
-    /// A property value parsed as an `f64`.
-    #[must_use]
-    pub fn property_f64(&self, id: &str) -> Option<f64> {
-        self.property(id).and_then(|v| v.trim().parse().ok())
+    pub fn property_get<T: FromField>(&self, id: &str) -> Option<T> {
+        self.properties.get(id).and_then(|v| T::from_field(v))
     }
 
     /// Insert or update a property.
-    pub fn set_property(&mut self, id: impl Into<String>, value: impl Into<String>) {
-        self.properties.insert(id.into(), value.into());
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidName`] if `id` is not a valid XISF property id.
+    pub fn set_property(&mut self, id: impl Into<String>, value: impl Into<String>) -> Result<()> {
+        let id = id.into();
+        Self::validate_property_id(&id)?;
+        self.properties.insert(id, value.into());
+        Ok(())
     }
 
     /// Remove a property by `id`. Returns `true` if it existed.
     pub fn remove_property(&mut self, id: &str) -> bool {
         self.properties.remove(id).is_some()
+    }
+
+    // ----- internals -----------------------------------------------------
+
+    fn indices<'s>(&'s self, name: &'s str) -> impl Iterator<Item = usize> + 's {
+        self.keywords
+            .iter()
+            .enumerate()
+            .filter(move |(_, k)| k.name.eq_ignore_ascii_case(name))
+            .map(|(i, _)| i)
+    }
+
+    fn first_index(&self, name: &str) -> Option<usize> {
+        self.indices(name).next()
+    }
+
+    /// Resolve a key to a keyword index, enforcing the strict rules.
+    fn resolve(&self, key: Key) -> Result<Option<usize>> {
+        match key {
+            Key::Name(name) => {
+                let mut it = self.indices(name);
+                let first = it.next();
+                if first.is_some() && it.next().is_some() {
+                    return Err(Error::Ambiguous {
+                        name: name.to_owned(),
+                        count: self.count(name),
+                    });
+                }
+                Ok(first)
+            }
+            Key::Nth(name, n) => {
+                let indices: Vec<usize> = self.indices(name).collect();
+                match indices.get(n) {
+                    Some(&i) => Ok(Some(i)),
+                    None if indices.is_empty() => Ok(None),
+                    None => Err(Error::IndexOutOfRange {
+                        name: name.to_owned(),
+                        index: n,
+                        count: indices.len(),
+                    }),
+                }
+            }
+        }
+    }
+
+    fn require_nth(&self, name: &str, n: usize) -> Result<usize> {
+        self.resolve(Key::Nth(name, n))?
+            .ok_or_else(|| Error::IndexOutOfRange {
+                name: name.to_owned(),
+                index: n,
+                count: 0,
+            })
+    }
+
+    fn validate_name(name: &str) -> Result<()> {
+        if name.is_empty() {
+            return Err(Error::InvalidName {
+                name: name.to_owned(),
+                reason: "empty",
+            });
+        }
+        if name.len() > 8 {
+            return Err(Error::InvalidName {
+                name: name.to_owned(),
+                reason: "exceeds 8 characters",
+            });
+        }
+        if !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(Error::InvalidName {
+                name: name.to_owned(),
+                reason: "must be ASCII letters, digits, `-`, or `_`",
+            });
+        }
+        Ok(())
+    }
+
+    fn validate_property_id(id: &str) -> Result<()> {
+        if id.is_empty() {
+            return Err(Error::InvalidName {
+                name: id.to_owned(),
+                reason: "empty",
+            });
+        }
+        if !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b':')
+        {
+            return Err(Error::InvalidName {
+                name: id.to_owned(),
+                reason: "property id must be ASCII alphanumeric, `_`, or `:`",
+            });
+        }
+        Ok(())
     }
 }

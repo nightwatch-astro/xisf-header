@@ -1,4 +1,4 @@
-//! Serialization: emit a self-contained XISF container from a [`Header`].
+//! Serialization: emit an XISF container (or just its header) from a [`Header`].
 
 use std::path::Path;
 
@@ -6,73 +6,86 @@ use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use quick_xml::Writer;
 
 use crate::error::Result;
-use crate::header::Header;
+use crate::header::{Header, StructuralHints};
 use crate::reader::SIGNATURE;
+use crate::value::Value;
 
-/// Width of the zero-padded attachment offset embedded in the XML. Fixed so the
-/// rendered header length is independent of the offset's magnitude.
+/// Fixed width of the zero-padded attachment offset, so the rendered header
+/// length is independent of the offset's magnitude.
 const OFFSET_WIDTH: usize = 12;
 
-/// Size, in bytes, of the placeholder attachment `to_bytes` appends.
-const ATTACHMENT_SIZE: usize = 1;
-
 impl Header {
-    /// Serialize this header into a real, self-contained XISF container:
-    /// the 16-byte preamble, the UTF-8 XML header, and a minimal placeholder
-    /// attachment referenced by the `<Image location="attachment:…">`.
+    /// Serialize into a complete, self-contained XISF container: the 16-byte
+    /// preamble, the UTF-8 XML header (with an `<Image>` built from `hints`), and
+    /// a zero-filled data block matching the hinted geometry.
     ///
-    /// `Header::parse(&header.to_bytes())` round-trips back to `header`.
+    /// `Header::parse(&header.to_bytes(&hints))` round-trips back to `header`.
     #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        // Two-pass render: the attachment offset depends on the header length,
-        // which depends on the offset's text. A fixed-width, zero-padded offset
-        // keeps the length identical between passes.
-        let placeholder = "0".repeat(OFFSET_WIDTH);
-        let xml_len = self.render_xml(&placeholder).len();
-        let offset = 16 + xml_len;
-        let offset_str = format!("{offset:0width$}", width = OFFSET_WIDTH);
-        let xml = self.render_xml(&offset_str);
-        debug_assert_eq!(xml.len(), xml_len, "offset width must not change length");
-
-        let mut out = Vec::with_capacity(16 + xml.len() + ATTACHMENT_SIZE);
-        out.extend_from_slice(SIGNATURE);
-        out.extend_from_slice(&(xml.len() as u32).to_le_bytes());
-        out.extend_from_slice(&[0u8; 4]); // reserved
-        out.extend_from_slice(&xml);
-        out.extend_from_slice(&[0u8; ATTACHMENT_SIZE]); // placeholder attachment
-        out
+    pub fn to_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
+        self.build(hints, true)
     }
 
-    /// Write this header as a complete XISF container to `path`.
+    /// Serialize just the header block — the preamble plus the XML header, with
+    /// no data attached. The `<Image location>` points at the byte offset
+    /// immediately after the header, where a caller doing in-place editing
+    /// appends the image data itself.
+    #[must_use]
+    pub fn to_header_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
+        self.build(hints, false)
+    }
+
+    /// Write a complete XISF container to `path`.
     ///
     /// # Errors
     ///
     /// Propagates any I/O error from writing the file.
-    pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        std::fs::write(path, self.to_bytes())?;
+    pub fn write_to_file<P: AsRef<Path>>(&self, path: P, hints: &StructuralHints) -> Result<()> {
+        std::fs::write(path, self.to_bytes(hints))?;
         Ok(())
     }
 
     /// Read a file's header, apply `edit`, and write the container back.
     ///
-    /// The rewritten file is header-only (with the placeholder attachment); it
-    /// does not preserve the original file's pixel payload.
-    ///
     /// # Errors
     ///
-    /// Propagates any error from [`Header::read_from_file`] or
-    /// [`Header::write_to_file`].
-    pub fn update_file<P: AsRef<Path>>(path: P, edit: impl FnOnce(&mut Self)) -> Result<()> {
+    /// Propagates any error from [`Header::read_from_file`] or the write.
+    pub fn update_file<P: AsRef<Path>>(
+        path: P,
+        hints: &StructuralHints,
+        edit: impl FnOnce(&mut Self),
+    ) -> Result<()> {
         let mut header = Self::read_from_file(&path)?;
         edit(&mut header);
-        header.write_to_file(&path)
+        header.write_to_file(&path, hints)
     }
 
-    /// Render the XML header with a given attachment offset string.
-    ///
-    /// Writing to an in-memory `Vec` is infallible, so the `quick-xml`
-    /// `io::Result`s are unwrapped.
-    fn render_xml(&self, offset_str: &str) -> Vec<u8> {
+    /// Assemble the container. `with_data` appends the zero-filled data block.
+    fn build(&self, hints: &StructuralHints, with_data: bool) -> Vec<u8> {
+        let size = data_size(hints);
+
+        // Two-pass render: the attachment offset depends on the header length,
+        // which depends on the offset's text. A fixed-width offset keeps the
+        // length identical between passes.
+        let placeholder = "0".repeat(OFFSET_WIDTH);
+        let xml_len = self.render_xml(hints, &placeholder, size).len();
+        let offset = 16 + xml_len;
+        let offset_str = format!("{offset:0width$}", width = OFFSET_WIDTH);
+        let xml = self.render_xml(hints, &offset_str, size);
+        debug_assert_eq!(xml.len(), xml_len, "offset width must not change length");
+
+        let mut out = Vec::with_capacity(16 + xml.len() + if with_data { size } else { 0 });
+        out.extend_from_slice(SIGNATURE);
+        out.extend_from_slice(&u32::try_from(xml.len()).unwrap_or(u32::MAX).to_le_bytes());
+        out.extend_from_slice(&[0u8; 4]); // reserved
+        out.extend_from_slice(&xml);
+        if with_data {
+            out.resize(out.len() + size, 0);
+        }
+        out
+    }
+
+    /// Render the XML header. Writing to an in-memory `Vec` is infallible.
+    fn render_xml(&self, hints: &StructuralHints, offset_str: &str, size: usize) -> Vec<u8> {
         const INFALLIBLE: &str = "writing XML to an in-memory buffer cannot fail";
 
         let mut w = Writer::new(Vec::new());
@@ -85,16 +98,20 @@ impl Header {
         w.write_event(Event::Start(xisf)).expect(INFALLIBLE);
 
         let mut image = BytesStart::new("Image");
-        image.push_attribute(("geometry", "1:1:1"));
-        image.push_attribute(("sampleFormat", "UInt8"));
-        let location = format!("attachment:{offset_str}:{ATTACHMENT_SIZE}");
+        image.push_attribute(("geometry", hints.geometry.as_str()));
+        image.push_attribute(("sampleFormat", hints.sample_format.as_str()));
+        image.push_attribute(("colorSpace", hints.color_space.as_str()));
+        let location = format!("attachment:{offset_str}:{size}");
         image.push_attribute(("location", location.as_str()));
         w.write_event(Event::Start(image)).expect(INFALLIBLE);
 
         for kw in &self.keywords {
             let mut e = BytesStart::new("FITSKeyword");
             e.push_attribute(("name", kw.name.as_str()));
-            let value = format!("'{}'", kw.value);
+            let value = match &kw.value {
+                Value::Str(s) => format!("'{s}'"),
+                Value::Literal(s) => s.clone(),
+            };
             e.push_attribute(("value", value.as_str()));
             e.push_attribute(("comment", kw.comment.as_str()));
             w.write_event(Event::Empty(e)).expect(INFALLIBLE);
@@ -115,5 +132,30 @@ impl Header {
             .expect(INFALLIBLE);
 
         w.into_inner()
+    }
+}
+
+/// Byte size of the data block implied by the hinted geometry and sample format.
+fn data_size(hints: &StructuralHints) -> usize {
+    let samples: Option<usize> = hints
+        .geometry
+        .split(':')
+        .map(|d| d.trim().parse::<usize>().ok())
+        .collect::<Option<Vec<_>>>()
+        .map(|dims| dims.iter().product());
+    let samples = samples.filter(|&s| s > 0).unwrap_or(1);
+    samples
+        .saturating_mul(bytes_per_sample(&hints.sample_format))
+        .max(1)
+}
+
+/// Bytes per sample for an XISF `sampleFormat`.
+fn bytes_per_sample(format: &str) -> usize {
+    match format {
+        "UInt16" | "Int16" => 2,
+        "UInt32" | "Int32" | "Float32" => 4,
+        "UInt64" | "Int64" | "Float64" | "Complex32" => 8,
+        "Complex64" => 16,
+        _ => 1, // UInt8/Int8 and anything unrecognized
     }
 }
