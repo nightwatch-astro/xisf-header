@@ -31,5 +31,9 @@ all = { level = "warn", priority = -1 }
 # Derive `serde::{Serialize, Deserialize}` on the public `Header`/`FitsKeyword` types.
 serde = ["dep:serde", "time/serde"]
 
+[dev-dependencies]
+proptest = "1.9.0"
+serde_json = "1.0.150"
+
 [package.metadata.docs.rs]
 all-features = true
