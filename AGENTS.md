@@ -16,16 +16,20 @@ serializes a `Header` back into a valid, self-contained XISF container.
 
 ```
 src/
-  lib.rs      crate root, docs, public re-exports, file helpers
+  lib.rs      crate root, docs, public re-exports (incl. `pub use time`)
   error.rs    Error enum + Result alias
-  keyword.rs  FitsKeyword struct + typed value accessors
-  header.rs   Header struct: CRUD (single + bulk) + typed getters + property CRUD
-  reader.rs   parse(&[u8]) -> Header  (preamble validation + XML extraction)
-  writer.rs   Header::to_bytes() -> Vec<u8>  (emits a real XISF container)
+  key.rs      Key: unified "NAME" / ("NAME", n) keyword address
+  value.rs    Value + FromField (read) + IntoValue (write) + Literal/Fixed/Sci
+  keyword.rs  FitsKeyword record
+  header.rs   Header: strict CRUD, typed get/set, atomic batch, property CRUD, StructuralHints
+  reader.rs   Header::parse / read_from_file (preamble validation + XML extraction)
+  writer.rs   Header::to_bytes / to_header_bytes / write_to_file / update_file
 tests/
-  roundtrip.rs   integration tests (signature, round-trip, file I/O, CRUD)
+  roundtrip.rs   integration tests (signature, round-trip, strict access, file I/O, CRUD)
 specs/
-  001-xisf-header/spec.md   lightweight spec of the extraction requirements
+  001-xisf-header/spec.md   spec of the read/edit/write requirements
+docs/
+  decisions/   architecture decision records
 ```
 
 ## Commands
@@ -39,11 +43,13 @@ specs/
 ## Conventions
 
 - `#![forbid(unsafe_code)]`; public items are documented (`missing_docs = warn`).
-- Reach for a good library instead of hand-rolling: `thiserror` for the error
-  type, `quick-xml` for XML, optional `serde` for (de)serialization. Prefer
-  mature, pure-Rust crates (no C/sys — keeps the build MSVC-safe).
-- Header-only: never read or write pixel/attachment payloads beyond the tiny
-  placeholder attachment `to_bytes()` writes to make a container self-contained.
+- Reach for a good library instead of hand-rolling: `thiserror` for errors,
+  `quick-xml` for XML, `time` for date/time, optional `serde` for
+  (de)serialization. Prefer mature, pure-Rust crates (no C/sys — MSVC-safe).
+- Keyword access is strict: a bare name must be unique or accessors return
+  `Error::Ambiguous`; repeats are addressed with an `(name, n)` key.
+- Header-only: never read or write pixel/attachment payloads beyond the
+  placeholder data block `to_bytes` writes to make a container self-contained.
 - Keep it simple and idiomatic; small, focused modules.
 
 ## MSRV
