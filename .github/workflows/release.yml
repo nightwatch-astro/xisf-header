@@ -1,6 +1,7 @@
 name: Release
 
-# release-please maintains a release PR from conventional commits on main.
+# release-please maintains a release PR from conventional commits on main,
+# authenticating as the sjorsr-release-bot GitHub App so its PRs trigger CI.
 # Merging that PR creates the GitHub release + tag, which triggers the publish
 # job below. Publishing authenticates via crates.io Trusted Publishing (OIDC);
 # there is no long-lived API token anywhere.
@@ -9,9 +10,7 @@ on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   release-please:
@@ -20,9 +19,15 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
     steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.SJORSR_RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.SJORSR_RELEASE_BOT_PRIVATE_KEY }}
       - uses: googleapis/release-please-action@v4
         id: release
         with:
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -37,9 +42,25 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      # Keeps re-runs and bootstrap releases green: publishing is skipped when
+      # this version is already on crates.io.
+      - name: Check whether this version is already published
+        id: check
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=${version}"
+          if curl -fsS -H "user-agent: xisf-header release workflow (github.com/nightwatch-astro/xisf-header)" \
+            "https://crates.io/api/v1/crates/xisf-header/${version}" > /dev/null; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.check.outputs.published == 'false'
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
+        if: steps.check.outputs.published == 'false'
       - run: cargo publish
+        if: steps.check.outputs.published == 'false'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
