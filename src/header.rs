@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::error::{Error, Result};
 use crate::key::Key;
 use crate::keyword::FitsKeyword;
+use crate::property::Property;
 use crate::value::{FromField, IntoValue};
 
 /// Geometry hints used when serializing a standalone container: they populate
@@ -41,7 +42,7 @@ impl Default for StructuralHints {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header {
     pub(crate) keywords: Vec<FitsKeyword>,
-    pub(crate) properties: BTreeMap<String, String>,
+    pub(crate) properties: BTreeMap<String, Property>,
 }
 
 impl Header {
@@ -329,23 +330,27 @@ impl Header {
 
     /// All `<Property>` entries, keyed by `id`.
     #[must_use]
-    pub fn properties(&self) -> &BTreeMap<String, String> {
+    pub fn properties(&self) -> &BTreeMap<String, Property> {
         &self.properties
     }
 
-    /// A property value by `id`.
+    /// A property's raw value text by `id`.
     #[must_use]
     pub fn property(&self, id: &str) -> Option<&str> {
-        self.properties.get(id).map(String::as_str)
+        self.properties.get(id).map(|p| p.value.as_str())
     }
 
     /// A property value interpreted as `T`.
     #[must_use]
     pub fn property_get<T: FromField>(&self, id: &str) -> Option<T> {
-        self.properties.get(id).and_then(|v| T::from_field(v))
+        self.properties
+            .get(id)
+            .and_then(|p| T::from_field(&p.value))
     }
 
-    /// Insert or update a property.
+    /// Insert or update a property's value. An existing property keeps its
+    /// `type`, `comment`, and `format`; a new one is created with type
+    /// `String`.
     ///
     /// # Errors
     ///
@@ -353,7 +358,28 @@ impl Header {
     pub fn set_property(&mut self, id: impl Into<String>, value: impl Into<String>) -> Result<()> {
         let id = id.into();
         Self::validate_property_id(&id)?;
-        self.properties.insert(id, value.into());
+        self.properties.entry(id).or_default().value = value.into();
+        Ok(())
+    }
+
+    /// Insert or update a property with an explicit XISF `type` (e.g.
+    /// `Float32`, `TimePoint`). An existing property keeps its `comment` and
+    /// `format`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidName`] if `id` is not a valid XISF property id.
+    pub fn set_property_with_type(
+        &mut self,
+        id: impl Into<String>,
+        value: impl Into<String>,
+        type_: impl Into<String>,
+    ) -> Result<()> {
+        let id = id.into();
+        Self::validate_property_id(&id)?;
+        let p = self.properties.entry(id).or_default();
+        p.value = value.into();
+        p.type_ = type_.into();
         Ok(())
     }
 
@@ -456,5 +482,102 @@ impl Header {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_name_rules() {
+        assert!(Header::validate_name("GAIN").is_ok());
+        assert!(Header::validate_name("DATE-OBS").is_ok());
+        assert!(Header::validate_name("lower_k").is_ok());
+        assert!(Header::validate_name("EIGHTCHR").is_ok());
+        assert!(Header::validate_name("").is_err());
+        assert!(Header::validate_name("NINECHARS").is_err());
+        assert!(Header::validate_name("BAD KEY").is_err());
+        assert!(Header::validate_name("NAME!").is_err());
+    }
+
+    #[test]
+    fn validate_property_id_rules() {
+        assert!(Header::validate_property_id("Instrument:Telescope:FocalLength").is_ok());
+        assert!(Header::validate_property_id("A_b:9").is_ok());
+        assert!(Header::validate_property_id("").is_err());
+        assert!(Header::validate_property_id("bad id!").is_err());
+        assert!(Header::validate_property_id("hy-phen").is_err());
+    }
+
+    #[test]
+    fn nth_write_on_absent_name_errors() {
+        let mut h = Header::new();
+        assert!(matches!(
+            h.set(("MISSING", 0), 1_i64),
+            Err(Error::IndexOutOfRange { count: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn set_with_comment_creates_and_updates() {
+        let mut h = Header::new();
+        h.set_with_comment("GAIN", 100_i64, "sensor gain").unwrap();
+        assert_eq!(h.get_i64("GAIN").unwrap(), Some(100));
+        assert_eq!(h.keywords()[0].comment, "sensor gain");
+
+        h.set_with_comment("GAIN", 200_i64, "updated").unwrap();
+        assert_eq!(h.get_i64("GAIN").unwrap(), Some(200));
+        assert_eq!(h.keywords()[0].comment, "updated");
+
+        h.append("HISTORY", "a").unwrap();
+        h.append("HISTORY", "b").unwrap();
+        assert!(matches!(
+            h.set_with_comment("HISTORY", "x", "c"),
+            Err(Error::Ambiguous { .. })
+        ));
+    }
+
+    #[test]
+    fn set_comment_on_absent_keyword_reports_not_found() {
+        let mut h = Header::new();
+        assert!(!h.set_comment("MISSING", "c").unwrap());
+    }
+
+    #[test]
+    fn remove_all_clears_every_occurrence() {
+        let mut h = Header::new();
+        h.append("HISTORY", "a").unwrap();
+        h.append("HISTORY", "b").unwrap();
+        h.set("GAIN", 1_i64).unwrap();
+        assert_eq!(h.remove_all("history"), 2); // case-insensitive
+        assert_eq!(h.count("HISTORY"), 0);
+        assert_eq!(h.remove_all("HISTORY"), 0);
+        assert_eq!(h.get_i64("GAIN").unwrap(), Some(1));
+    }
+
+    #[test]
+    fn iter_preserves_document_order() {
+        let mut h = Header::new();
+        h.set("A", 1_i64).unwrap();
+        h.set("B", 2_i64).unwrap();
+        h.set("C", 3_i64).unwrap();
+        let names: Vec<&str> = h.iter().map(|k| k.name.as_str()).collect();
+        assert_eq!(names, ["A", "B", "C"]);
+    }
+
+    #[test]
+    fn string_keys_are_accepted() {
+        let mut h = Header::new();
+        let key = String::from("GAIN");
+        h.set(&key, 100_i64).unwrap();
+        assert_eq!(h.get_i64(&key).unwrap(), Some(100));
+    }
+
+    #[test]
+    fn generic_get_reads_string() {
+        let mut h = Header::new();
+        h.set("OBJECT", "M31").unwrap();
+        assert_eq!(h.get::<String>("OBJECT").unwrap(), Some("M31".to_owned()));
     }
 }

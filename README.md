@@ -3,35 +3,36 @@
 [![CI](https://github.com/nightwatch-astro/xisf-header/actions/workflows/ci.yml/badge.svg)](https://github.com/nightwatch-astro/xisf-header/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/xisf-header.svg)](https://crates.io/crates/xisf-header)
 [![Docs.rs](https://docs.rs/xisf-header/badge.svg)](https://docs.rs/xisf-header)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/nightwatch-astro/xisf-header/blob/main/LICENSE)
 
-Read and write [XISF](https://pixinsight.com/xisf/) (Extensible Image Serialization
-Format) image-file **headers** — extract the embedded FITS keywords and
-create/read/update/delete the header container — built on well-chosen, pure-Rust
-libraries ([`quick-xml`](https://crates.io/crates/quick-xml),
-[`thiserror`](https://crates.io/crates/thiserror), and
-[`time`](https://crates.io/crates/time), with optional
-[`serde`](https://crates.io/crates/serde) support).
+Rust crate that reads and writes [XISF](https://pixinsight.com/xisf/)
+(Extensible Image Serialization Format) image-file headers: it extracts the
+embedded FITS keywords and XISF `<Property>` elements, supports
+create/read/update/delete on both, and serializes a header back into an XISF
+container.
 
-The crate is deliberately **header-only**: it parses and emits the 16-byte XISF
-preamble plus the UTF-8 XML header, and never reads image/pixel data.
+The crate is header-only: it parses and emits the 16-byte XISF preamble plus
+the UTF-8 XML header, and never reads image/pixel data.
 
 ## Features
 
-- **Parse** an XISF header from bytes or a file, validating the `XISF0100`
-  signature, the little-endian XML-length field (capped at 8 MiB), and UTF-8.
-- **Strict, keyword-oriented access.** A bare name must be unique or the accessor
-  returns [`Error::Ambiguous`]; repeated keywords (e.g. `HISTORY`) are reached with
-  an `(name, n)` key or the `get_all`/`count` helpers. No silent first-wins.
+- **Parse** an XISF header from bytes or a file. The `XISF0100` signature, the
+  little-endian XML-length field (capped at 8 MiB), and UTF-8 encoding are
+  validated.
+- **Strict keyword access.** A bare name must be unique or the accessor returns
+  `Error::Ambiguous`; repeated keywords (e.g. `HISTORY`) are addressed with an
+  `(name, n)` key or the `get_all`/`count` helpers.
 - **Typed reads and writes.** One generic `get::<T>` over the open
   [`FromField`] trait (`String`, `f64`, `i64`, `u32`, `bool`, and a date/time),
   with `get_str`/`get_f64`/… wrappers; writes take `impl IntoValue`, so the Rust
   type chooses string vs. bare-literal formatting.
-- **`<Property>` support**, so XISF-native metadata (e.g.
-  `Instrument:Telescope:FocalLength`) is available alongside the FITS keywords.
-- **Two serialization outputs.** `to_bytes(&hints)` for a self-contained container
-  and `to_header_bytes(&hints)` for the header block alone.
-- No `unsafe`, pure-Rust dependencies (no C/sys — MSVC-safe), MSRV 1.82.
+- **`<Property>` round-trip.** XISF properties keep their `type`, `comment`,
+  and `format` attributes verbatim; `String` properties stored as child text
+  are read. Values are stored raw (XISF properties are not FITS-quoted).
+- **Two serialization outputs.** `to_bytes(&hints)` for a self-contained
+  container and `to_header_bytes(&hints)` for the header block alone.
+- No `unsafe`. Dependencies are pure Rust (no C/sys crates): `quick-xml`,
+  `thiserror`, `time`, and optional `serde`. MSRV 1.82.
 
 ## Install
 
@@ -42,8 +43,8 @@ xisf-header = "0.2"
 
 ### Optional features
 
-- **`serde`** — derive `Serialize`/`Deserialize` on `Header`, `FitsKeyword`, and
-  the value types:
+- **`serde`** — derive `Serialize`/`Deserialize` on `Header`, `FitsKeyword`,
+  `Property`, and the value types:
 
   ```toml
   xisf-header = { version = "0.2", features = ["serde"] }
@@ -108,6 +109,24 @@ assert_eq!(header.count("HISTORY"), 2);
 # Ok::<(), xisf_header::Error>(())
 ```
 
+### XISF properties
+
+```rust
+use xisf_header::Header;
+
+let mut header = Header::new();
+
+// Plain `set_property` creates a `String` property; an explicit XISF type is
+// kept on the property and survives round-trips.
+header.set_property("Observation:Object:Name", "NGC 7000")?;
+header.set_property_with_type("Instrument:Telescope:FocalLength", "0.53", "Float32")?;
+
+assert_eq!(header.property("Observation:Object:Name"), Some("NGC 7000"));
+assert_eq!(header.property_get::<f64>("Instrument:Telescope:FocalLength"), Some(0.53));
+assert_eq!(header.properties()["Instrument:Telescope:FocalLength"].type_, "Float32");
+# Ok::<(), xisf_header::Error>(())
+```
+
 ### Controlled numeric formatting
 
 ```rust
@@ -152,11 +171,22 @@ Header::update_file("out.xisf", &StructuralHints::default(), |h| {
 # Ok::<(), xisf_header::Error>(())
 ```
 
-> `to_bytes`/`write_to_file`/`update_file` emit a self-contained, header-only
-> container with a data block sized from `StructuralHints`; they do not preserve an
-> existing file's pixel payload. That is by design — this crate manages headers and
-> fixtures, not image data.
+> **Warning:** `to_bytes`/`write_to_file`/`update_file` emit a self-contained,
+> header-only container: the data block is **zero-filled** from
+> `StructuralHints`, and XML elements the crate does not model (`Metadata`,
+> `Resolution`, thumbnails, …) are not re-emitted. Do not point them at files
+> whose pixel data must be kept. To edit a real image's header, emit
+> `to_header_bytes(&hints)` and append the file's original data yourself.
+
+## Documentation
+
+Full API documentation is generated from the source doc comments and published
+at **[docs.rs/xisf-header](https://docs.rs/xisf-header)** for every release
+(all features enabled). Build it locally with `cargo doc --no-deps
+--all-features --open`. Every public item is documented; CI fails the build on
+missing or broken documentation.
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the
+[Apache License, Version 2.0](https://github.com/nightwatch-astro/xisf-header/blob/main/LICENSE).

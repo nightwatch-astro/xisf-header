@@ -209,10 +209,131 @@ impl IntoValue for Sci {
 /// as a float (a `.` or exponent is always present).
 fn format_f64(v: f64) -> String {
     let s = format!("{v}");
-    if s.contains(['.', 'e', 'E', 'n', 'i']) {
-        // already floating-looking, or inf/nan
+    if s.contains(['.', 'e', 'E']) || !v.is_finite() {
+        // already floating-looking, or inf/NaN
         s
     } else {
         format!("{s}.0")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_field_string_is_verbatim() {
+        assert_eq!(String::from_field(" M31 "), Some(" M31 ".to_owned()));
+    }
+
+    #[test]
+    fn from_field_f64() {
+        assert_eq!(f64::from_field("300"), Some(300.0));
+        assert_eq!(f64::from_field(" 3.5 "), Some(3.5));
+        assert_eq!(f64::from_field("1e3"), Some(1000.0));
+        assert_eq!(f64::from_field("abc"), None);
+    }
+
+    #[test]
+    fn from_field_i64_is_lenient() {
+        assert_eq!(i64::from_field("20"), Some(20));
+        assert_eq!(i64::from_field("20.0"), Some(20));
+        assert_eq!(i64::from_field(" -7 "), Some(-7));
+        assert_eq!(i64::from_field("1e10"), Some(10_000_000_000));
+        assert_eq!(i64::from_field("20.5"), None);
+        assert_eq!(i64::from_field("1e300"), None); // beyond exact-f64 range
+        assert_eq!(i64::from_field("inf"), None);
+        assert_eq!(i64::from_field("abc"), None);
+    }
+
+    #[test]
+    fn from_field_u32() {
+        assert_eq!(u32::from_field("2"), Some(2));
+        assert_eq!(u32::from_field("2.0"), Some(2));
+        assert_eq!(u32::from_field("-1"), None);
+        assert_eq!(u32::from_field("4294967296"), None); // u32::MAX + 1
+    }
+
+    #[test]
+    fn from_field_bool_spellings() {
+        for t in ["T", "t", "1", "true", "TRUE", " T "] {
+            assert_eq!(bool::from_field(t), Some(true), "{t:?}");
+        }
+        for f in ["F", "f", "0", "false", "FALSE"] {
+            assert_eq!(bool::from_field(f), Some(false), "{f:?}");
+        }
+        assert_eq!(bool::from_field("yes"), None);
+        assert_eq!(bool::from_field(""), None);
+    }
+
+    #[test]
+    fn from_field_datetime_forms() {
+        let dt = PrimitiveDateTime::from_field("2026-07-11T22:15:03").unwrap();
+        assert_eq!((dt.year(), dt.hour(), dt.second()), (2026, 22, 3));
+
+        let frac = PrimitiveDateTime::from_field("2026-07-11T22:15:03.25").unwrap();
+        assert_eq!(frac.millisecond(), 250);
+
+        // A trailing Z (UTC designator) is tolerated.
+        assert!(PrimitiveDateTime::from_field("2026-07-11T22:15:03Z").is_some());
+
+        // A bare calendar date reads as midnight.
+        let date = PrimitiveDateTime::from_field("2026-07-11").unwrap();
+        assert_eq!((date.hour(), date.minute()), (0, 0));
+
+        assert_eq!(PrimitiveDateTime::from_field("2026-13-40T00:00:00"), None);
+        assert_eq!(PrimitiveDateTime::from_field("not a date"), None);
+    }
+
+    #[test]
+    fn into_value_kind_selection() {
+        assert_eq!("s".into_value(), Value::Str("s".to_owned()));
+        assert_eq!(String::from("s").into_value(), Value::Str("s".to_owned()));
+        assert_eq!(100_i64.into_value(), Value::Literal("100".to_owned()));
+        assert_eq!(2_u32.into_value(), Value::Literal("2".to_owned()));
+        assert_eq!(true.into_value(), Value::Literal("T".to_owned()));
+        assert_eq!(false.into_value(), Value::Literal("F".to_owned()));
+        let v = Value::Literal("x".to_owned());
+        assert_eq!(v.clone().into_value(), v);
+    }
+
+    #[test]
+    fn f64_formatting_is_normalized() {
+        assert_eq!(300.0.into_value(), Value::Literal("300.0".to_owned()));
+        assert_eq!(0.5.into_value(), Value::Literal("0.5".to_owned()));
+        // Huge magnitudes render as full decimals; the text must read back
+        // as the identical float.
+        let huge = 1e300.into_value();
+        assert_eq!(f64::from_field(huge.text()), Some(1e300));
+        assert!(huge.text().ends_with(".0"));
+        assert_eq!(f64::INFINITY.into_value(), Value::Literal("inf".to_owned()));
+        assert_eq!(f64::NAN.into_value(), Value::Literal("NaN".to_owned()));
+    }
+
+    #[test]
+    fn controlled_formatting_wrappers() {
+        assert_eq!(
+            Fixed(300.0, 2).into_value(),
+            Value::Literal("300.00".to_owned())
+        );
+        assert_eq!(
+            Sci(1234.5, 3).into_value(),
+            Value::Literal("1.23E3".to_owned())
+        );
+        assert_eq!(
+            Sci(0.00012345, 2).into_value(),
+            Value::Literal("1.2E-4".to_owned())
+        );
+        assert_eq!(
+            Literal("0x1F".to_owned()).into_value(),
+            Value::Literal("0x1F".to_owned())
+        );
+    }
+
+    #[test]
+    fn value_text_and_default() {
+        assert_eq!(Value::Str("a".to_owned()).text(), "a");
+        assert_eq!(Value::Literal("1".to_owned()).text(), "1");
+        assert_eq!(Value::default(), Value::Str(String::new()));
     }
 }

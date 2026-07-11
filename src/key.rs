@@ -51,3 +51,23 @@ impl<'a> From<(&'a str, usize)> for Key<'a> {
         Key::Nth(name, n)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conversions_and_name() {
+        let by_name: Key = "GAIN".into();
+        assert_eq!(by_name, Key::Name("GAIN"));
+        assert_eq!(by_name.name(), "GAIN");
+
+        let owned = String::from("GAIN");
+        let from_string: Key = (&owned).into();
+        assert_eq!(from_string, Key::Name("GAIN"));
+
+        let nth: Key = ("HISTORY", 2).into();
+        assert_eq!(nth, Key::Nth("HISTORY", 2));
+        assert_eq!(nth.name(), "HISTORY");
+    }
+}

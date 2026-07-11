@@ -5,6 +5,7 @@ mod error;
 mod header;
 mod key;
 mod keyword;
+mod property;
 mod reader;
 mod value;
 mod writer;
@@ -13,6 +14,7 @@ pub use error::{Error, Result};
 pub use header::{Header, StructuralHints};
 pub use key::Key;
 pub use keyword::FitsKeyword;
+pub use property::Property;
 pub use value::{Fixed, FromField, IntoValue, Literal, Sci, Value};
 
 /// Re-export of [`time`], whose types appear in this crate's public API.

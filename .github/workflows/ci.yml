@@ -22,8 +22,10 @@ jobs:
         run: cargo build --all-targets --verbose
       - name: Test
         run: cargo test --all-targets --verbose
+      - name: Test (serde)
+        run: cargo test --all-targets --features serde --verbose
       - name: Doc tests
-        run: cargo test --doc --verbose
+        run: cargo test --doc --features serde --verbose
 
   fmt:
     name: Rustfmt
@@ -45,6 +47,18 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --all-features
+
+  # API docs must build without warnings (missing docs, broken links).
+  docs:
+    name: Rustdoc
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --no-deps --all-features
 
   msrv:
     name: MSRV (1.82.0)

@@ -8,10 +8,11 @@ default:
 build:
     cargo build --all-targets
 
-# Run the full test suite (unit, integration, and doc tests).
+# Run the full test suite (unit, integration, and doc tests; both feature sets).
 test:
     cargo test --all-targets
-    cargo test --doc
+    cargo test --all-targets --features serde
+    cargo test --doc --features serde
 
 # Lint: clippy (warnings as errors) + rustfmt check.
 lint:
@@ -26,9 +27,9 @@ fmt:
 dev:
     cargo watch -x "test --all-targets"
 
-# Build the API docs.
+# Build the API docs (strict: warnings are errors, as in CI).
 doc:
-    cargo doc --no-deps --open
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --open
 
 # Dry-run the crates.io package to confirm it is publishable.
 publish-check:
