@@ -114,7 +114,9 @@ fn parse_xml(xml: &str) -> Result<Header> {
                 let local = e.local_name();
                 let tag = local.as_ref();
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
-                    header.keywords.push(parse_keyword(&e)?);
+                    if let Some(kw) = parse_keyword(&e)? {
+                        header.keywords.push(kw);
+                    }
                 } else if tag.eq_ignore_ascii_case(b"Property") {
                     let (id, prop, _) = parse_property(&e)?;
                     if let Some(id) = id {
@@ -126,7 +128,9 @@ fn parse_xml(xml: &str) -> Result<Header> {
                 let local = e.local_name();
                 let tag = local.as_ref();
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
-                    header.keywords.push(parse_keyword(&e)?);
+                    if let Some(kw) = parse_keyword(&e)? {
+                        header.keywords.push(kw);
+                    }
                 } else if tag.eq_ignore_ascii_case(b"Property") {
                     let (id, prop, has_value_attr) = parse_property(&e)?;
                     open_property = Some(OpenProperty {
@@ -170,8 +174,10 @@ fn parse_xml(xml: &str) -> Result<Header> {
     Ok(header)
 }
 
-/// Read a `<FITSKeyword name= value= comment=>` element.
-fn parse_keyword(e: &BytesStart) -> Result<FitsKeyword> {
+/// Read a `<FITSKeyword name= value= comment=>` element. An element without a
+/// `name` attribute yields `None`: a nameless keyword cannot be addressed and
+/// is skipped, like a `<Property>` without an `id`.
+fn parse_keyword(e: &BytesStart) -> Result<Option<FitsKeyword>> {
     let mut kw = FitsKeyword::default();
     for attr in e.attributes() {
         let attr = attr?;
@@ -185,7 +191,7 @@ fn parse_keyword(e: &BytesStart) -> Result<FitsKeyword> {
             _ => {}
         }
     }
-    Ok(kw)
+    Ok((!kw.name.is_empty()).then_some(kw))
 }
 
 /// Read a `<Property>` element's attributes: `id`, `type`, `value`,
@@ -304,6 +310,17 @@ mod tests {
         let h = Header::parse(&container(xml, [0; 4])).unwrap();
         assert_eq!(h.get_i64("GAIN").unwrap(), Some(100));
         assert_eq!(h.keywords()[0].comment, "c");
+    }
+
+    #[test]
+    fn nameless_keywords_are_skipped() {
+        let xml = r#"<xisf>
+            <FITSKeyword value="'orphan'" comment="no name"/>
+            <FITSKeyword name="GAIN" value="100" comment=""/>
+        </xisf>"#;
+        let h = Header::parse(&container(xml, [0; 4])).unwrap();
+        assert_eq!(h.keywords().len(), 1);
+        assert_eq!(h.get_i64("GAIN").unwrap(), Some(100));
     }
 
     #[test]
