@@ -50,30 +50,25 @@ the decisions each side owns.
 
 ## Current state of xisf-header
 
-Shipped at 0.1.0 (published, CI-green) on a **simpler** model than the shared
-architecture: semantic re-render (not byte-exact), `Option`-returning reads with
-first-occurrence-wins, a single `to_bytes`, string-typed properties, concrete
-typed getters (no `FromField`/`IntoValue`), and no strict-key duplicate handling.
+- 0.1.0 shipped/published on the initial semantic model (`Option` reads,
+  first-occurrence-wins, a single `to_bytes`, concrete getters).
+- 0.2 implemented on branch `feat/faithful-editor-0.2`: strict unified `Key`
+  (`"NAME"` / `("NAME", n)`), `Result` reads that `Err` on duplicates, the open
+  `FromField` read trait + `impl IntoValue` writes (`Literal`/`Fixed`/`Sci`), two
+  outputs (`to_bytes`/`to_header_bytes`), atomic batch mutations, and `time` as a
+  public dependency. Not yet byte-exact.
 
-## Open decision (needs owner input)
+## Migration status
 
-**Whether/when to migrate xisf-header's implementation to the full faithful-editor
-model.** It is a breaking change to a published crate with genuinely uncertain
-payoff for XISF specifically:
+The strict-key + `FromField`/`IntoValue` + two-output surface is **done** in 0.2
+(branch `feat/faithful-editor-0.2`), awaiting review/merge and a `crates.io`
+release.
 
-- Byte-exact XML retention adds real complexity (retain each element's original
-  source span; dirty-bit re-emit). Its value depends on whether the consumer
-  (PlateVault → `RawFileMetadata`) needs verbatim byte preservation versus
-  semantic correctness — which the shipped model already delivers.
-- Strict-key access + `Result` reads + `FromField`/`IntoValue` + two outputs are
-  API-breaking (0.1 → 0.2).
-
-Recommendation: **defer the byte-exact-XML rewrite** until a concrete consumer
-need for verbatim preservation exists. If we migrate, do it on a branch as a 0.2
-that lands the strict-key + `FromField`/`IntoValue` + two-output surface first
-(the clearest correctness/ergonomics win), and treat byte-exact XML retention as a
-separate, later step justified by an actual requirement. Not executed
-autonomously because it breaks a published crate and its value is unproven.
+**Deferred:** byte-exact XML retention (retain each element's original source
+span; dirty-bit re-emit). Its value depends on whether the consumer (PlateVault →
+`RawFileMetadata`) needs verbatim byte preservation rather than the semantic
+correctness the current model already delivers. Revisit when a concrete
+verbatim-preservation requirement exists.
 
 ## Recommendations issued to the fits-header agent
 

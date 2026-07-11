@@ -44,6 +44,38 @@ pub enum Error {
     #[error("malformed XML attribute: {0}")]
     Attr(#[from] quick_xml::events::attributes::AttrError),
 
+    /// A singular access (`get`/`set`/`remove` by bare name) targeted a keyword
+    /// that appears more than once. Disambiguate with an `(name, n)` key, or use
+    /// [`get_all`](crate::Header::get_all)/[`count`](crate::Header::count).
+    #[error("keyword `{name}` is ambiguous: it appears {count} times")]
+    Ambiguous {
+        /// The keyword name.
+        name: String,
+        /// Number of occurrences.
+        count: usize,
+    },
+
+    /// An `(name, n)` access referenced an occurrence index that does not exist.
+    #[error("keyword `{name}` has no occurrence {index} ({count} present)")]
+    IndexOutOfRange {
+        /// The keyword name.
+        name: String,
+        /// The requested occurrence index.
+        index: usize,
+        /// Number of occurrences present.
+        count: usize,
+    },
+
+    /// A write supplied a name that is not a valid FITS keyword (≤ 8 printable
+    /// ASCII characters) or valid XISF property id.
+    #[error("invalid identifier `{name}`: {reason}")]
+    InvalidName {
+        /// The rejected identifier.
+        name: String,
+        /// Why it was rejected.
+        reason: &'static str,
+    },
+
     /// An I/O error occurred while reading or writing a file.
     #[error(transparent)]
     Io(#[from] std::io::Error),
