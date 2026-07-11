@@ -22,8 +22,10 @@ jobs:
         run: cargo build --all-targets --verbose
       - name: Test
         run: cargo test --all-targets --verbose
+      - name: Test (serde)
+        run: cargo test --all-targets --features serde --verbose
       - name: Doc tests
-        run: cargo test --doc --verbose
+        run: cargo test --doc --features serde --verbose
 
   fmt:
     name: Rustfmt
