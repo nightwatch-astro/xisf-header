@@ -36,6 +36,11 @@ impl Header {
 
     /// Write a complete XISF container to `path`.
     ///
+    /// **Warning:** the container is header-only, as produced by
+    /// [`Header::to_bytes`]: its data block is zero-filled from `hints`. An
+    /// existing file at `path` is replaced wholesale — including any pixel
+    /// data it held.
+    ///
     /// # Errors
     ///
     /// Propagates any I/O error from writing the file.
@@ -45,6 +50,14 @@ impl Header {
     }
 
     /// Read a file's header, apply `edit`, and write the container back.
+    ///
+    /// **Warning:** the rewritten file is a self-contained, header-only
+    /// container: its data block is **zero-filled** from `hints`, and XML
+    /// elements this crate does not model (`Metadata`, `Resolution`,
+    /// thumbnails, …) are not re-emitted. Do not use this on a file whose
+    /// pixel data must be kept — read the header, edit it, emit
+    /// [`Header::to_header_bytes`], and append the file's original data
+    /// yourself.
     ///
     /// # Errors
     ///
