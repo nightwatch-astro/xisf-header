@@ -27,9 +27,9 @@ fmt:
 dev:
     cargo watch -x "test --all-targets"
 
-# Build the API docs.
+# Build the API docs (strict: warnings are errors, as in CI).
 doc:
-    cargo doc --no-deps --open
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --open
 
 # Dry-run the crates.io package to confirm it is publishable.
 publish-check:

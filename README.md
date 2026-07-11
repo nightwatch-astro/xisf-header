@@ -3,7 +3,7 @@
 [![CI](https://github.com/nightwatch-astro/xisf-header/actions/workflows/ci.yml/badge.svg)](https://github.com/nightwatch-astro/xisf-header/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/xisf-header.svg)](https://crates.io/crates/xisf-header)
 [![Docs.rs](https://docs.rs/xisf-header/badge.svg)](https://docs.rs/xisf-header)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/nightwatch-astro/xisf-header/blob/main/LICENSE)
 
 Rust crate that reads and writes [XISF](https://pixinsight.com/xisf/)
 (Extensible Image Serialization Format) image-file headers: it extracts the
@@ -178,6 +178,15 @@ Header::update_file("out.xisf", &StructuralHints::default(), |h| {
 > whose pixel data must be kept. To edit a real image's header, emit
 > `to_header_bytes(&hints)` and append the file's original data yourself.
 
+## Documentation
+
+Full API documentation is generated from the source doc comments and published
+at **[docs.rs/xisf-header](https://docs.rs/xisf-header)** for every release
+(all features enabled). Build it locally with `cargo doc --no-deps
+--all-features --open`. Every public item is documented; CI fails the build on
+missing or broken documentation.
+
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the
+[Apache License, Version 2.0](https://github.com/nightwatch-astro/xisf-header/blob/main/LICENSE).
