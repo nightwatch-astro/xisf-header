@@ -1,0 +1,41 @@
+# Rust / Cargo
+/target
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is committed on purpose (recommended for all crates since Rust 1.70).
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# JetBrains
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Vim
+*.swp
+*.swo
+Session.vim
+
+# Backups / patches
+*.orig
+*.bak
+*.patch
