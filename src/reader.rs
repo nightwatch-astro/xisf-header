@@ -224,3 +224,100 @@ fn classify_value(text: &str) -> Value {
         Value::Literal(text.to_owned())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Wrap XML in a valid preamble, with explicit reserved bytes.
+    fn container(xml: &str, reserved: [u8; 4]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(SIGNATURE);
+        out.extend_from_slice(&(u32::try_from(xml.len()).unwrap()).to_le_bytes());
+        out.extend_from_slice(&reserved);
+        out.extend_from_slice(xml.as_bytes());
+        out
+    }
+
+    #[test]
+    fn classify_quoted_and_bare() {
+        assert_eq!(classify_value("'M31'"), Value::Str("M31".to_owned()));
+        assert_eq!(classify_value("''"), Value::Str(String::new()));
+        // One quote layer is stripped, inner quotes stay.
+        assert_eq!(classify_value("'''"), Value::Str("'".to_owned()));
+        assert_eq!(classify_value("300"), Value::Literal("300".to_owned()));
+        assert_eq!(classify_value("'"), Value::Literal("'".to_owned()));
+        assert_eq!(classify_value(""), Value::Literal(String::new()));
+    }
+
+    #[test]
+    fn too_small_preamble() {
+        assert!(matches!(
+            Header::parse(b"XISF01"),
+            Err(Error::TooSmall { needed: 16, got: 6 })
+        ));
+    }
+
+    #[test]
+    fn too_small_for_declared_length() {
+        let mut bytes = container("<xisf/>", [0; 4]);
+        bytes[8..12].copy_from_slice(&100_u32.to_le_bytes()); // declare more than present
+        assert!(matches!(
+            Header::parse(&bytes),
+            Err(Error::TooSmall { needed: 116, .. })
+        ));
+    }
+
+    #[test]
+    fn header_too_large_is_rejected() {
+        let mut bytes = container("<xisf/>", [0; 4]);
+        let over = u32::try_from(MAX_HEADER_LEN + 1).unwrap();
+        bytes[8..12].copy_from_slice(&over.to_le_bytes());
+        assert!(matches!(
+            Header::parse(&bytes),
+            Err(Error::HeaderTooLarge { max, .. }) if max == MAX_HEADER_LEN
+        ));
+    }
+
+    #[test]
+    fn invalid_utf8_is_rejected() {
+        let mut bytes = container("<xisf></xisf>", [0; 4]);
+        bytes[20] = 0xFF;
+        assert!(matches!(Header::parse(&bytes), Err(Error::Utf8(_))));
+    }
+
+    #[test]
+    fn malformed_xml_is_rejected() {
+        let bytes = container("<xisf><Image></xisf>", [0; 4]);
+        assert!(matches!(Header::parse(&bytes), Err(Error::Xml(_))));
+    }
+
+    #[test]
+    fn reserved_bytes_are_ignored() {
+        let bytes = container("<xisf/>", [0xDE, 0xAD, 0xBE, 0xEF]);
+        assert!(Header::parse(&bytes).is_ok());
+    }
+
+    #[test]
+    fn attribute_names_are_case_insensitive() {
+        let xml = r#"<xisf><FITSKeyword NAME="GAIN" VALUE="100" COMMENT="c"/></xisf>"#;
+        let h = Header::parse(&container(xml, [0; 4])).unwrap();
+        assert_eq!(h.get_i64("GAIN").unwrap(), Some(100));
+        assert_eq!(h.keywords()[0].comment, "c");
+    }
+
+    #[test]
+    fn unknown_attributes_and_elements_are_skipped() {
+        let xml = r#"<xisf>
+            <Metadata><Property id="XISF:CreatorApplication" type="String" value="PixInsight"/></Metadata>
+            <Image geometry="256:256:1" sampleFormat="UInt16" colorSpace="Gray" location="attachment:4096:131072">
+                <FITSKeyword name="GAIN" value="100" comment="" unknown="x"/>
+                <Resolution horizontal="72" vertical="72"/>
+            </Image>
+        </xisf>"#;
+        let h = Header::parse(&container(xml, [0; 4])).unwrap();
+        assert_eq!(h.get_i64("GAIN").unwrap(), Some(100));
+        // Properties are collected wherever they appear in the header.
+        assert_eq!(h.property("XISF:CreatorApplication"), Some("PixInsight"));
+    }
+}

@@ -164,3 +164,92 @@ fn bytes_per_sample(format: &str) -> usize {
         _ => 1, // UInt8/Int8 and anything unrecognized
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hints(geometry: &str, sample_format: &str) -> StructuralHints {
+        StructuralHints {
+            geometry: geometry.to_owned(),
+            sample_format: sample_format.to_owned(),
+            color_space: "Gray".to_owned(),
+        }
+    }
+
+    #[test]
+    fn bytes_per_sample_matrix() {
+        for (format, bytes) in [
+            ("UInt8", 1),
+            ("Int8", 1),
+            ("UInt16", 2),
+            ("Int16", 2),
+            ("UInt32", 4),
+            ("Int32", 4),
+            ("Float32", 4),
+            ("UInt64", 8),
+            ("Int64", 8),
+            ("Float64", 8),
+            ("Complex32", 8),
+            ("Complex64", 16),
+            ("SomethingElse", 1),
+        ] {
+            assert_eq!(bytes_per_sample(format), bytes, "{format}");
+        }
+    }
+
+    #[test]
+    fn data_size_from_geometry() {
+        assert_eq!(data_size(&hints("1:1:1", "UInt8")), 1);
+        assert_eq!(data_size(&hints("100:100:3", "Float32")), 120_000);
+        assert_eq!(data_size(&hints("16:16:1", "UInt16")), 512);
+        // Malformed or zero geometry falls back to a single sample.
+        assert_eq!(data_size(&hints("abc", "UInt8")), 1);
+        assert_eq!(data_size(&hints("0:0:0", "Float32")), 4);
+        assert_eq!(data_size(&hints("", "UInt8")), 1);
+    }
+
+    #[test]
+    fn header_only_output_has_no_data_block() {
+        let h = Header::new();
+        let hints = StructuralHints::default();
+        let bytes = h.to_header_bytes(&hints);
+        let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        assert_eq!(bytes.len(), 16 + xml_len);
+
+        // The complete container appends exactly the hinted data size.
+        assert_eq!(h.to_bytes(&hints).len(), 16 + xml_len + data_size(&hints));
+    }
+
+    #[test]
+    fn attachment_offset_is_fixed_width_and_correct() {
+        let h = Header::new();
+        let bytes = h.to_bytes(&StructuralHints::default());
+        let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let xml = std::str::from_utf8(&bytes[16..16 + xml_len]).unwrap();
+        let offset = format!("{:0width$}", 16 + xml_len, width = OFFSET_WIDTH);
+        assert!(
+            xml.contains(&format!("attachment:{offset}:")),
+            "location must point right past the header: {xml}"
+        );
+    }
+
+    #[test]
+    fn xml_special_characters_round_trip() {
+        let mut h = Header::new();
+        h.set("OBJECT", "a<b&\"c'd").unwrap();
+        h.set_comment("OBJECT", "less < & \"quoted\"").unwrap();
+        h.set_property("Notes:Text", "x<y&z").unwrap();
+        let parsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+        assert_eq!(parsed, h);
+        assert_eq!(parsed.get_str("OBJECT").unwrap(), Some("a<b&\"c'd"));
+        assert_eq!(parsed.property("Notes:Text"), Some("x<y&z"));
+    }
+
+    #[test]
+    fn empty_header_round_trips() {
+        let h = Header::new();
+        let parsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+        assert_eq!(parsed, h);
+    }
+}

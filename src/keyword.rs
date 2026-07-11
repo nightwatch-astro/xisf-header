@@ -46,3 +46,21 @@ impl FitsKeyword {
         T::from_field(self.value.text())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_selects_value_kind_from_rust_type() {
+        let s = FitsKeyword::new("OBJECT", "M31", "target");
+        assert_eq!(s.value_str(), "M31");
+        assert_eq!(s.comment, "target");
+        assert_eq!(s.get::<String>(), Some("M31".to_owned()));
+
+        let n = FitsKeyword::new("GAIN", 100_i64, "");
+        assert_eq!(n.value_str(), "100");
+        assert_eq!(n.get::<i64>(), Some(100));
+        assert_eq!(n.get::<bool>(), None);
+    }
+}
