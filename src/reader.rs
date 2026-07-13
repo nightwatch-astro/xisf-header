@@ -9,7 +9,7 @@ use quick_xml::{Reader, XmlVersion};
 
 use crate::error::{Error, Result};
 use crate::header::Header;
-use crate::keyword::FitsKeyword;
+use crate::keyword::{is_commentary, FitsKeyword};
 use crate::property::Property;
 use crate::value::Value;
 
@@ -401,21 +401,43 @@ fn find_attr_value_span(tag: &[u8], attr_name: &[u8]) -> Option<(usize, usize)> 
 /// Read a `<FITSKeyword name= value= comment=>` element. An element without a
 /// `name` attribute yields `None`: a nameless keyword cannot be addressed and
 /// is skipped, like a `<Property>` without an `id`.
+///
+/// `HISTORY`/`COMMENT` are FITS commentary keywords with no value — their
+/// free text is read from `comment` (the correct, spec-conformant XISF form:
+/// `value="" comment="text"`). If `comment` is empty, fall back to `value`
+/// (unquoted) so files this crate wrote before this fix — which quoted the
+/// text into `value` — still read their text back; see [`is_commentary`].
 fn parse_keyword(e: &BytesStart) -> Result<Option<FitsKeyword>> {
-    let mut kw = FitsKeyword::default();
+    let mut name = String::new();
+    let mut raw_value = String::new();
+    let mut comment = String::new();
     for attr in e.attributes() {
         let attr = attr?;
         let value = attr.normalized_value(XmlVersion::Implicit1_0)?;
         match attr.key.as_ref() {
-            k if k.eq_ignore_ascii_case(b"name") => kw.name = value.into_owned(),
-            k if k.eq_ignore_ascii_case(b"value") => {
-                kw.value = classify_value(&value);
-            }
-            k if k.eq_ignore_ascii_case(b"comment") => kw.comment = value.into_owned(),
+            k if k.eq_ignore_ascii_case(b"name") => name = value.into_owned(),
+            k if k.eq_ignore_ascii_case(b"value") => raw_value = value.into_owned(),
+            k if k.eq_ignore_ascii_case(b"comment") => comment = value.into_owned(),
             _ => {}
         }
     }
-    Ok((!kw.name.is_empty()).then_some(kw))
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let (value, comment) = if is_commentary(&name) {
+        if comment.is_empty() {
+            (classify_value(&raw_value), String::new())
+        } else {
+            (Value::Str(comment), String::new())
+        }
+    } else {
+        (classify_value(&raw_value), comment)
+    };
+    Ok(Some(FitsKeyword {
+        name,
+        value,
+        comment,
+    }))
 }
 
 /// Read a `<Property>` element's attributes: `id`, `type`, `value`,
@@ -545,6 +567,27 @@ mod tests {
         let h = Header::parse(&container(xml, [0; 4])).unwrap();
         assert_eq!(h.keywords().len(), 1);
         assert_eq!(h.get_i64("GAIN").unwrap(), Some(100));
+    }
+
+    #[test]
+    fn commentary_keyword_reads_from_comment_attribute() {
+        // The canonical, spec-conformant form: no value, text in `comment`.
+        let xml = r#"<xisf><FITSKeyword name="HISTORY" value="" comment="processed in PixInsight"/></xisf>"#;
+        let h = Header::parse(&container(xml, [0; 4])).unwrap();
+        assert_eq!(
+            h.get_str("HISTORY").unwrap(),
+            Some("processed in PixInsight")
+        );
+    }
+
+    #[test]
+    fn commentary_keyword_falls_back_to_quoted_value_for_backward_compat() {
+        // Files this crate wrote before this fix quoted the text into
+        // `value` and left `comment` empty; those must keep reading.
+        let xml =
+            r#"<xisf><FITSKeyword name="HISTORY" value="&apos;old form&apos;" comment=""/></xisf>"#;
+        let h = Header::parse(&container(xml, [0; 4])).unwrap();
+        assert_eq!(h.get_str("HISTORY").unwrap(), Some("old form"));
     }
 
     #[test]

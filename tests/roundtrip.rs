@@ -97,6 +97,30 @@ fn strict_duplicate_access() {
 }
 
 #[test]
+fn commentary_keywords_round_trip_through_bytes() {
+    let mut h = Header::new();
+    h.append("HISTORY", "reduced with siril").unwrap();
+    h.append("HISTORY", "stacked 20x300s").unwrap();
+    h.append("HISTORY", "registered").unwrap();
+    h.append("COMMENT", "processed in PixInsight").unwrap();
+
+    let bytes = h.to_header_bytes(&StructuralHints::default());
+    let parsed = Header::parse(&bytes).unwrap();
+
+    assert_eq!(parsed.count("HISTORY"), 3);
+    assert_eq!(parsed.count("COMMENT"), 1);
+    assert_eq!(
+        parsed.get_all::<String>("HISTORY"),
+        ["reduced with siril", "stacked 20x300s", "registered"]
+    );
+    assert_eq!(
+        parsed.get_all::<String>("COMMENT"),
+        ["processed in PixInsight"]
+    );
+    assert_eq!(parsed, h);
+}
+
+#[test]
 fn index_out_of_range_errors() {
     let mut h = Header::new();
     h.append("HISTORY", "a").unwrap();

@@ -26,6 +26,15 @@ pub struct FitsKeyword {
     pub comment: String,
 }
 
+/// Whether `name` is a FITS commentary keyword (`HISTORY`/`COMMENT`), which
+/// carries no FITS value — only free text. XISF represents that text in the
+/// `comment` attribute with an empty `value`, unlike every other keyword
+/// (spec + reference implementations; see PixInsight-written files). Exact,
+/// case-sensitive match: only the canonical uppercase FITS spellings count.
+pub(crate) fn is_commentary(name: &str) -> bool {
+    matches!(name, "HISTORY" | "COMMENT")
+}
+
 impl FitsKeyword {
     /// Create a keyword from its name, value, and comment.
     ///
