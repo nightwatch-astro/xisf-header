@@ -35,14 +35,21 @@ header.set("GAIN", 100_i64)?;
 A bare name must be unique to read or write directly; `HISTORY`-style
 keywords that repeat are built with
 [`Header::append`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.append)
-and read back with `get_all`/`count`, or an `("HISTORY", n)` key for one
-occurrence.
+and read back with `get_all`/`count`. An `("HISTORY", n)` key addresses one
+occurrence — to update it in place or remove it.
 
 ```rust
 # use xisf_header::Header;
 # let mut header = Header::new();
 header.append("HISTORY", "reduced with siril")?;
 header.append("HISTORY", "stacked 20x300s")?;
+
+// Read them all, then revise the first line and drop it.
+let steps: Vec<String> = header.get_all("HISTORY");
+assert_eq!(steps.len(), 2);
+header.set(("HISTORY", 0), "reduced with siril v2")?; // update one occurrence
+header.remove(("HISTORY", 0))?;                        // remove one occurrence
+assert_eq!(header.count("HISTORY"), 1);
 # Ok::<(), xisf_header::Error>(())
 ```
 
