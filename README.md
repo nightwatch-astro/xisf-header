@@ -135,7 +135,9 @@ header.remove("GAIN")?; // delete
 ### Repeated keywords
 
 [`append`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.append)
-adds an occurrence unconditionally; select one back with an
+adds an occurrence unconditionally; read every occurrence with
+[`get_all`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.get_all),
+and select, update, or remove one with an
 [`(name, n)`](https://docs.rs/xisf-header/latest/xisf_header/enum.Key.html)
 key.
 
@@ -150,6 +152,18 @@ header.append("HISTORY", "stacked 20x300s")?;
 assert!(header.get_str("HISTORY").is_err());
 assert_eq!(header.get_str(("HISTORY", 1))?, Some("stacked 20x300s"));
 assert_eq!(header.count("HISTORY"), 2);
+
+// Read every occurrence in order.
+assert_eq!(
+    header.get_all::<String>("HISTORY"),
+    ["reduced with siril", "stacked 20x300s"],
+);
+// Update one occurrence in place.
+header.set(("HISTORY", 0), "reduced with siril v2")?;
+assert_eq!(header.get_str(("HISTORY", 0))?, Some("reduced with siril v2"));
+// Remove one occurrence (or clear them all with `remove_all`).
+header.remove(("HISTORY", 0))?;
+assert_eq!(header.count("HISTORY"), 1);
 # Ok::<(), xisf_header::Error>(())
 ```
 
