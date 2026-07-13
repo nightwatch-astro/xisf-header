@@ -32,28 +32,38 @@ a `Header` back into an XISF container. Header-only — it never touches pixel d
   Writes take `impl IntoValue`: the Rust type selects string vs. bare-literal
   formatting, with `Literal`/`Fixed`/`Sci` for controlled output and default `f64`
   as the shortest round-trippable float.
-- **FR-6 Write.** `to_bytes(&StructuralHints)` emits a complete container
-  (`XISF0100` + `u32` LE XML length + 4 reserved bytes + UTF-8 XML with an
-  `<Image>` built from the hints + a zero-filled data block of the hinted size).
-  `to_header_bytes(&StructuralHints)` emits the header block alone, for callers
-  supplying their own data.
+- **FR-6 Write a new header block.** `to_header_bytes(&StructuralHints)` emits
+  the header block alone (`XISF0100` + `u32` LE XML length + 4 reserved bytes +
+  UTF-8 XML with an `<Image>` built from the hints, its `location` offset sized
+  for hint-sized data). Callers append their own data to assemble a container.
+  (Superseded: the earlier `to_bytes(&StructuralHints)` — which fabricated a
+  zero-filled data block — was removed; it could not preserve real pixel data.)
 - **FR-7 File I/O.** `read_from_file` reads only the preamble + XML (never pixel
-  data); `write_to_file` and `update_file` write a container from a `Header` and
-  `StructuralHints`.
+  data). `update_file(path, edit)` edits a file's header in place, byte-exact:
+  it splices only the changed `<FITSKeyword>`/`<Property>` elements into the
+  original bytes, preserves unmodeled XML and the attached data block verbatim
+  (a no-op edit reproduces the file byte-for-byte), and recomputes the `<Image
+  location>` offset when the header length changes. It takes no `StructuralHints`.
+  Layouts it cannot splice safely (zero or multiple attachments) return
+  `Unsupported`. (Superseded: the earlier `write_to_file`, which rewrote a
+  container from `StructuralHints` and zero-filled data, was removed.)
 
 ## Acceptance
 
 - Bad signature → error; truncated input → error.
-- `Header::parse(header.to_bytes(&hints)) == header` (round-trip), including value
-  kind (string vs. literal) and comments.
+- `Header::parse(header.to_header_bytes(&hints)) == header` (round-trip),
+  including value kind (string vs. literal) and comments.
+- A no-op `update_file` reproduces the input file byte-for-byte; an edit changes
+  only the intended keyword/property (plus the offset) while unmodeled XML and
+  the attached data survive intact.
 - A bare-name `get`/`set`/`remove` on a repeated keyword returns `Ambiguous`;
   `(name, n)` and `get_all`/`count` address the repeats.
 - Batch mutations are atomic; typed getters read values; invalid names are rejected.
 
 ## Non-goals
 
-- Reading, writing, or preserving pixel/attachment payloads.
-- Byte-exact preservation of unmodeled XML (verbatim retention of the source
-  bytes) — see the architecture ADR for the deferred faithful-editor step.
+- Interpreting, decoding, or synthesizing pixel/attachment payloads. (`update_file`
+  moves the attached data block's raw bytes to keep a file byte-exact after an
+  edit, but never reads or reconstructs their content.)
 - The `metadata_xisf` adapter mapping to `RawFileMetadata` (that lives in the
   PlateVault monorepo, which consumes this crate).

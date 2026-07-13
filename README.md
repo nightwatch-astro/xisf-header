@@ -238,8 +238,7 @@ recomputed and the original data is moved (unchanged) to the new offset.
 use xisf_header::Header;
 
 Header::update_file("out.xisf", |h| {
-    h.set("OBJECT", "M31")?;
-    h.remove("TEMP")?;
+    h.set("OBJECT", "NGC 7000")?;
     Ok(())
 })?;
 # Ok::<(), xisf_header::Error>(())
