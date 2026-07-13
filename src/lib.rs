@@ -20,3 +20,6 @@ pub use value::{Fixed, FromField, IntoValue, Literal, Sci, Value};
 
 /// Re-export of [`time`], whose types appear in this crate's public API.
 pub use time;
+
+#[doc = include_str!("../docs/guide.md")]
+pub mod guide {}

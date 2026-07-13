@@ -26,6 +26,13 @@ pub enum Key<'a> {
 
 impl<'a> Key<'a> {
     /// The keyword name this key addresses.
+    ///
+    /// ```
+    /// use xisf_header::Key;
+    ///
+    /// let key: Key = ("HISTORY", 1).into();
+    /// assert_eq!(key.name(), "HISTORY");
+    /// ```
     #[must_use]
     pub fn name(&self) -> &'a str {
         match *self {

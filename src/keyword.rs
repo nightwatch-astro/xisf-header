@@ -43,12 +43,26 @@ impl FitsKeyword {
     }
 
     /// The value's raw text, regardless of kind.
+    ///
+    /// ```
+    /// use xisf_header::FitsKeyword;
+    ///
+    /// let kw = FitsKeyword::new("OBJECT", "NGC 7000", "Target");
+    /// assert_eq!(kw.value_str(), "NGC 7000");
+    /// ```
     #[must_use]
     pub fn value_str(&self) -> &str {
         self.value.text()
     }
 
     /// Interpret the value as `T` (see [`FromField`]).
+    ///
+    /// ```
+    /// use xisf_header::FitsKeyword;
+    ///
+    /// let kw = FitsKeyword::new("EXPTIME", 300.0, "");
+    /// assert_eq!(kw.get::<f64>(), Some(300.0));
+    /// ```
     #[must_use]
     pub fn get<T: FromField>(&self) -> Option<T> {
         T::from_field(self.value.text())
