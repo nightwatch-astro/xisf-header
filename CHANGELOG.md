@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.4](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.3...v0.3.4) (2026-07-13)
+
+
+### Features
+
+* add Header::write_to_file for safe, race-free new-file creation ([#14](https://github.com/nightwatch-astro/xisf-header/issues/14)) ([c2fcc81](https://github.com/nightwatch-astro/xisf-header/commit/c2fcc81586acc5f4da9542d0429a5f566ba3838a))
+
 ## [0.3.3](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.2...v0.3.3) (2026-07-13)
 
 
