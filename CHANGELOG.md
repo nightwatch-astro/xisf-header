@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.1...v0.3.2) (2026-07-13)
+
+
+### Documentation
+
+* show updating and removing repeated keywords (HISTORY/COMMENT) ([#10](https://github.com/nightwatch-astro/xisf-header/issues/10)) ([3312c39](https://github.com/nightwatch-astro/xisf-header/commit/3312c39f87559f5a6bb9783840c166bc42b5192e))
+
 ## [0.3.1](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.0...v0.3.1) (2026-07-13)
 
 
