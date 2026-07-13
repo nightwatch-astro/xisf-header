@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/nightwatch-astro/xisf-header/compare/v0.2.1...v0.3.0) (2026-07-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* Header::to_bytes and Header::write_to_file are removed (they only ever produced a zero-filled, unmodeled-XML-dropping container). Assemble a new file with to_header_bytes(&hints) plus your own data. Header::update_file(path, edit) drops the &StructuralHints argument and its edit closure now returns Result<()>.
+
+### Features
+
+* byte-exact in-place XISF header editing ([#6](https://github.com/nightwatch-astro/xisf-header/issues/6)) ([de01604](https://github.com/nightwatch-astro/xisf-header/commit/de016048a4a3ab70c3a0d6d0d2e5f353a6a8f82f))
+
 ## [0.2.1](https://github.com/nightwatch-astro/xisf-header/compare/v0.2.0...v0.2.1) (2026-07-11)
 
 
