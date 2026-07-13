@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.5](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.4...v0.3.5) (2026-07-13)
+
+
+### Documentation
+
+* use absolute URLs for guide and example links so they resolve on docs.rs ([#16](https://github.com/nightwatch-astro/xisf-header/issues/16)) ([2b345ca](https://github.com/nightwatch-astro/xisf-header/commit/2b345ca01ca4142da520818e6affb0390cad42e8))
+
 ## [0.3.4](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.3...v0.3.4) (2026-07-13)
 
 
