@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.3](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.2...v0.3.3) (2026-07-13)
+
+
+### Bug Fixes
+
+* serialize HISTORY/COMMENT as commentary keywords, not quoted values ([#12](https://github.com/nightwatch-astro/xisf-header/issues/12)) ([6d2ac69](https://github.com/nightwatch-astro/xisf-header/commit/6d2ac69c5d402b0d3c650f1d432c4bdf221777ba))
+
 ## [0.3.2](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.1...v0.3.2) (2026-07-13)
 
 
