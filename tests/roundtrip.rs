@@ -27,7 +27,7 @@ fn wrap_container(xml: &str) -> Vec<u8> {
 
 #[test]
 fn bad_signature_errors() {
-    let mut bytes = sample().to_bytes(&StructuralHints::default());
+    let mut bytes = sample().to_header_bytes(&StructuralHints::default());
     bytes[0] = b'Z';
     assert!(matches!(
         Header::parse(&bytes),
@@ -46,7 +46,7 @@ fn truncated_input_errors() {
 #[test]
 fn round_trips_through_bytes() {
     let h = sample();
-    let parsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+    let parsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
     assert_eq!(parsed, h);
 }
 
@@ -55,7 +55,7 @@ fn string_and_literal_kinds_round_trip() {
     let mut h = Header::new();
     h.set("OBJECT", "a < b & \"c\"").unwrap(); // string, XML specials
     h.set("NAXIS", 2_i64).unwrap(); // bare literal
-    let parsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+    let parsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
     assert_eq!(parsed.get_str("OBJECT").unwrap(), Some("a < b & \"c\""));
     assert_eq!(parsed.get_i64("NAXIS").unwrap(), Some(2));
     assert_eq!(parsed, h);
@@ -196,7 +196,7 @@ fn quoted_string_values_are_unwrapped() {
 }
 
 #[test]
-fn two_outputs_and_file_round_trip() {
+fn header_only_output_and_file_round_trip() {
     let hints = StructuralHints::default();
     let path = std::env::temp_dir().join(format!("xisf-header-it-{}.xisf", std::process::id()));
 
@@ -205,20 +205,25 @@ fn two_outputs_and_file_round_trip() {
     // Header-only output parses back and carries no data block.
     let header_only = h.to_header_bytes(&hints);
     assert_eq!(Header::parse(&header_only).unwrap(), h);
-    assert!(header_only.len() < h.to_bytes(&hints).len());
 
-    // File round-trip.
-    h.write_to_file(&path, &hints).unwrap();
+    // Assembling a full container means appending the caller's own data,
+    // sized per `hints` (1x1x1 UInt8 default = 1 byte).
+    let mut container = header_only.clone();
+    container.push(0xEE);
+    std::fs::write(&path, &container).unwrap();
     assert_eq!(Header::read_from_file(&path).unwrap(), h);
 
-    Header::update_file(&path, &hints, |header| {
-        header.set("OBJECT", "M31").unwrap();
-        header.remove("OFFSET").unwrap();
+    Header::update_file(&path, |header| {
+        header.set("OBJECT", "M31")?;
+        header.remove("OFFSET")?;
+        Ok(())
     })
     .unwrap();
     let edited = Header::read_from_file(&path).unwrap();
     assert_eq!(edited.get_str("OBJECT").unwrap(), Some("M31"));
     assert_eq!(edited.get_str("OFFSET").unwrap(), None);
+    // The pixel byte survives the in-place edit untouched.
+    assert_eq!(std::fs::read(&path).unwrap().last(), Some(&0xEE));
 
     std::fs::remove_file(&path).ok();
 }

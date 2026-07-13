@@ -22,7 +22,7 @@ fn typed_property_round_trips_with_type_and_value_intact() {
     );
 
     // Round-trip: type stays Float32, value stays unquoted.
-    let reparsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+    let reparsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
     assert_eq!(reparsed, h);
     let p2 = &reparsed.properties()["Instrument:Telescope:FocalLength"];
     assert_eq!(p2.type_, "Float32");
@@ -37,7 +37,7 @@ fn typed_property_round_trips_with_type_and_value_intact() {
 fn property_values_are_not_fits_quoted() {
     let mut h = Header::new();
     h.set_property("Observer:Name", "Sjors").unwrap();
-    let bytes = h.to_bytes(&StructuralHints::default());
+    let bytes = h.to_header_bytes(&StructuralHints::default());
     let xml = std::str::from_utf8(&bytes[16..]).unwrap();
     assert!(xml.contains(r#"value="Sjors""#), "unexpected XML: {xml}");
     assert!(
@@ -86,7 +86,7 @@ fn comment_and_format_attributes_are_preserved() {
         <Property id="Instrument:Camera:Gain" type="Int32" value="100" format="%d" comment="sensor gain"/>
         </Image></xisf>"#;
     let h = Header::parse(&wrap_container(xml)).unwrap();
-    let reparsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+    let reparsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
     let p = &reparsed.properties()["Instrument:Camera:Gain"];
     assert_eq!(p.format, "%d");
     assert_eq!(p.comment, "sensor gain");

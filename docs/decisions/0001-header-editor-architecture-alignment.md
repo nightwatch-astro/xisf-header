@@ -1,7 +1,14 @@
 # 1. Header-editor architecture: alignment with fits-header
 
 Status: Accepted (shared architecture as the reference for both crates).
-Migration of xisf-header's implementation to the full model is an open decision — see *Open decision*.
+
+> **Superseded in part (branch `feat/header-scoped-io`).** The byte-exact editor
+> once deferred here is now implemented. The write surface changed: `to_bytes` and
+> `write_to_file` (which fabricated a zero-filled data block) were removed;
+> `to_header_bytes(&hints)` assembles a new file and `update_file(path, edit)`
+> edits an existing one in place, byte-exact and data-preserving. Read the
+> *Two outputs*, *Current state*, and *Migration status* sections below in that
+> light.
 
 ## Context
 
@@ -30,9 +37,11 @@ the decisions each side owns.
 - **Types.** Reads via an open `FromField` trait; writes via `impl IntoValue`
   (`Literal`/`Fixed`/`Sci` wrappers); default f64 = shortest round-trip, normalized
   to read as a float.
-- **Two outputs.** `to_bytes(&StructuralHints)` (complete object, synthesize
-  mandatory metadata only-when-absent) and `to_header_bytes()` (header-only, for
-  in-place editing: concatenate with the file's original data).
+- **Two write paths.** `to_header_bytes(&StructuralHints)` (header-only: assemble
+  a new file by concatenating with your own data) and `update_file(path, edit)`
+  (edit an existing file in place, byte-exact — splice only changed elements,
+  preserve unmodeled XML and the attached data). (This replaces the earlier
+  `to_bytes(&StructuralHints)`, which fabricated a zero-filled data block.)
 - **Deps/policy.** Pure-Rust, MSVC-safe: `time` (public, re-exported),
   `thiserror`, optional off-by-default `serde`, `proptest` (dev);
   `#![forbid(unsafe_code)]`, Apache-2.0, edition 2021.
@@ -52,23 +61,22 @@ the decisions each side owns.
 
 - 0.1.0 shipped/published on the initial semantic model (`Option` reads,
   first-occurrence-wins, a single `to_bytes`, concrete getters).
-- 0.2 implemented on branch `feat/faithful-editor-0.2`: strict unified `Key`
-  (`"NAME"` / `("NAME", n)`), `Result` reads that `Err` on duplicates, the open
-  `FromField` read trait + `impl IntoValue` writes (`Literal`/`Fixed`/`Sci`), two
-  outputs (`to_bytes`/`to_header_bytes`), atomic batch mutations, and `time` as a
-  public dependency. Not yet byte-exact.
+- 0.2 implemented the strict unified `Key` (`"NAME"` / `("NAME", n)`), `Result`
+  reads that `Err` on duplicates, the open `FromField` read trait + `impl
+  IntoValue` writes (`Literal`/`Fixed`/`Sci`), atomic batch mutations, and `time`
+  as a public dependency.
+- `feat/header-scoped-io` completed the byte-exact editor: removed the
+  data-fabricating `to_bytes`/`write_to_file` and made `update_file` splice edits
+  into the original file bytes, preserving unmodeled XML and the data block.
 
 ## Migration status
 
-The strict-key + `FromField`/`IntoValue` + two-output surface is **done** in 0.2
-(branch `feat/faithful-editor-0.2`), awaiting review/merge and a `crates.io`
-release.
-
-**Deferred:** byte-exact XML retention (retain each element's original source
-span; dirty-bit re-emit). Its value depends on whether the consumer (PlateVault →
-`RawFileMetadata`) needs verbatim byte preservation rather than the semantic
-correctness the current model already delivers. Revisit when a concrete
-verbatim-preservation requirement exists.
+The strict-key + `FromField`/`IntoValue` surface landed in 0.2. Byte-exact XML
+retention — once deferred here — is now **done** on `feat/header-scoped-io`:
+`update_file` locates each edited element's original byte span and re-emits only
+those, keeping all surrounding XML and the attached data verbatim. The write API
+is header-scoped (`to_header_bytes` + `update_file`); the data-fabricating
+`to_bytes`/`write_to_file` were removed.
 
 ## Recommendations issued to the fits-header agent
 

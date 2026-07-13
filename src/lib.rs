@@ -7,6 +7,7 @@ mod key;
 mod keyword;
 mod property;
 mod reader;
+mod splice;
 mod value;
 mod writer;
 

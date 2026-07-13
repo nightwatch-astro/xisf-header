@@ -8,9 +8,22 @@ use crate::keyword::FitsKeyword;
 use crate::property::Property;
 use crate::value::{FromField, IntoValue};
 
-/// Geometry hints used when serializing a standalone container: they populate
-/// the `<Image>` element when the header does not already carry that structure.
-/// Defaults to a minimal 1×1 8-bit grayscale image.
+/// Geometry hints used when serializing a standalone container. A [`Header`]
+/// stores only keywords and properties — never image structure — so these
+/// hints always supply the `<Image>` element's `geometry`, `sampleFormat`, and
+/// `colorSpace`. Defaults to a minimal 1×1 8-bit grayscale image.
+///
+/// ```
+/// use xisf_header::StructuralHints;
+///
+/// let hints = StructuralHints {
+///     geometry: "6248:4176:1".to_owned(),
+///     sample_format: "UInt16".to_owned(),
+///     color_space: "Gray".to_owned(),
+/// };
+/// assert_eq!(hints.sample_format, "UInt16");
+/// assert_eq!(StructuralHints::default().geometry, "1:1:1");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StructuralHints {
@@ -37,7 +50,18 @@ impl Default for StructuralHints {
 ///
 /// Keyword access is **strict**: a bare name must be unique, or the accessor
 /// returns [`Error::Ambiguous`]. Repeated keywords are reached with an
-/// `(name, n)` key or the `get_all`/`count` helpers. Keyword order is preserved.
+/// `(name, n)` key or the `get_all`/`count` helpers. Keyword order is
+/// preserved; property iteration is ordered by id, not document order.
+///
+/// ```
+/// use xisf_header::Header;
+///
+/// let mut header = Header::new();
+/// header.set("IMAGETYP", "Master Dark")?;
+/// header.set("EXPTIME", 300.0)?;
+/// assert_eq!(header.get_str("IMAGETYP")?, Some("Master Dark"));
+/// # Ok::<(), xisf_header::Error>(())
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header {
@@ -47,6 +71,13 @@ pub struct Header {
 
 impl Header {
     /// Create an empty header.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let header = Header::new();
+    /// assert_eq!(header.keywords().len(), 0);
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -64,6 +95,15 @@ impl Header {
     ///
     /// [`Error::Ambiguous`] on a duplicated bare name; [`Error::IndexOutOfRange`]
     /// for an `(name, n)` index past the last occurrence.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("OBJECT", "NGC 7000")?;
+    /// assert_eq!(header.get::<String>("OBJECT")?, Some("NGC 7000".to_owned()));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get<'a, T: FromField>(&self, key: impl Into<Key<'a>>) -> Result<Option<T>> {
         Ok(self
             .resolve(key.into())?
@@ -75,6 +115,15 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::get`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// assert_eq!(header.get_str("IMAGETYP")?, Some("Master Dark"));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get_str<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<&str>> {
         Ok(self
             .resolve(key.into())?
@@ -86,6 +135,15 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::get`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("EXPTIME", 300.0)?;
+    /// assert_eq!(header.get_f64("EXPTIME")?, Some(300.0));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get_f64<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<f64>> {
         self.get(key)
     }
@@ -95,6 +153,15 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::get`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("GAIN", 100_i64)?;
+    /// assert_eq!(header.get_i64("GAIN")?, Some(100));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get_i64<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<i64>> {
         self.get(key)
     }
@@ -104,6 +171,15 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::get`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("XBINNING", 2_u32)?;
+    /// assert_eq!(header.get_u32("XBINNING")?, Some(2));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get_u32<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<u32>> {
         self.get(key)
     }
@@ -113,6 +189,15 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::get`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("SIMPLE", true)?;
+    /// assert_eq!(header.get_bool("SIMPLE")?, Some(true));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get_bool<'a>(&self, key: impl Into<Key<'a>>) -> Result<Option<bool>> {
         self.get(key)
     }
@@ -122,6 +207,16 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::get`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("DATE-OBS", "2026-07-11T22:15:03")?;
+    /// let observed = header.get_datetime("DATE-OBS")?.unwrap();
+    /// assert_eq!(observed.year(), 2026);
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn get_datetime<'a>(
         &self,
         key: impl Into<Key<'a>>,
@@ -130,6 +225,18 @@ impl Header {
     }
 
     /// Every value for `name`, in order, that reads as `T`.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.append("HISTORY", "reduced with siril").unwrap();
+    /// header.append("HISTORY", "stacked 20x300s").unwrap();
+    /// assert_eq!(
+    ///     header.get_all::<String>("HISTORY"),
+    ///     vec!["reduced with siril", "stacked 20x300s"]
+    /// );
+    /// ```
     pub fn get_all<T: FromField>(&self, name: &str) -> Vec<T> {
         self.indices(name)
             .filter_map(|i| self.keywords[i].get::<T>())
@@ -137,18 +244,46 @@ impl Header {
     }
 
     /// How many keywords carry `name` (case-insensitive).
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.append("HISTORY", "reduced with siril").unwrap();
+    /// header.append("HISTORY", "stacked 20x300s").unwrap();
+    /// assert_eq!(header.count("HISTORY"), 2);
+    /// ```
     #[must_use]
     pub fn count(&self, name: &str) -> usize {
         self.indices(name).count()
     }
 
     /// All keywords in document order.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("GAIN", 100_i64).unwrap();
+    /// assert_eq!(header.keywords().len(), 1);
+    /// assert_eq!(header.keywords()[0].name, "GAIN");
+    /// ```
     #[must_use]
     pub fn keywords(&self) -> &[FitsKeyword] {
         &self.keywords
     }
 
     /// Iterate the keywords in document order.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark").unwrap();
+    /// header.set("EXPTIME", 300.0).unwrap();
+    /// let names: Vec<&str> = header.iter().map(|k| k.name.as_str()).collect();
+    /// assert_eq!(names, ["IMAGETYP", "EXPTIME"]);
+    /// ```
     pub fn iter(&self) -> std::slice::Iter<'_, FitsKeyword> {
         self.keywords.iter()
     }
@@ -163,6 +298,17 @@ impl Header {
     /// [`Error::Ambiguous`] when a bare name is duplicated (use `(name, n)` or
     /// `set_at`-style selection), [`Error::IndexOutOfRange`] for a bad occurrence
     /// index, or [`Error::InvalidName`] when creating an invalid keyword.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?; // absent: appended
+    /// header.set("IMAGETYP", "Master Flat")?; // unique: updated in place
+    /// assert_eq!(header.get_str("IMAGETYP")?, Some("Master Flat"));
+    /// assert_eq!(header.keywords().len(), 1);
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn set<'a>(&mut self, key: impl Into<Key<'a>>, value: impl IntoValue) -> Result<()> {
         let key = key.into();
         let value = value.into_value();
@@ -192,6 +338,16 @@ impl Header {
     /// # Errors
     ///
     /// [`Error::InvalidName`] if `name` is not a valid keyword.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.append("HISTORY", "reduced with siril")?;
+    /// header.append("HISTORY", "stacked 20x300s")?;
+    /// assert_eq!(header.count("HISTORY"), 2);
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn append(&mut self, name: &str, value: impl IntoValue) -> Result<()> {
         Self::validate_name(name)?;
         self.keywords.push(FitsKeyword {
@@ -207,7 +363,18 @@ impl Header {
     ///
     /// # Errors
     ///
-    /// See [`Header::set`].
+    /// See [`Header::get`]: [`Error::Ambiguous`] on a duplicated bare name,
+    /// [`Error::IndexOutOfRange`] for an out-of-range `(name, n)` index.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// assert!(header.set_comment("IMAGETYP", "Type of image")?);
+    /// assert_eq!(header.keywords()[0].comment, "Type of image");
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn set_comment<'a>(
         &mut self,
         key: impl Into<Key<'a>>,
@@ -227,6 +394,16 @@ impl Header {
     /// # Errors
     ///
     /// See [`Header::set`].
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_with_comment("GAIN", 100_i64, "Sensor gain")?;
+    /// assert_eq!(header.get_i64("GAIN")?, Some(100));
+    /// assert_eq!(header.keywords()[0].comment, "Sensor gain");
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn set_with_comment<'a>(
         &mut self,
         key: impl Into<Key<'a>>,
@@ -245,7 +422,18 @@ impl Header {
     ///
     /// # Errors
     ///
-    /// See [`Header::set`].
+    /// See [`Header::get`]: [`Error::Ambiguous`] on a duplicated bare name,
+    /// [`Error::IndexOutOfRange`] for an out-of-range `(name, n)` index.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set("GAIN", 100_i64)?;
+    /// assert!(header.remove("GAIN")?);
+    /// assert_eq!(header.get_i64("GAIN")?, None);
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn remove<'a>(&mut self, key: impl Into<Key<'a>>) -> Result<bool> {
         match self.resolve(key.into())? {
             Some(i) => {
@@ -257,6 +445,16 @@ impl Header {
     }
 
     /// Remove every keyword named `name`. Returns how many were removed.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.append("HISTORY", "reduced with siril").unwrap();
+    /// header.append("HISTORY", "stacked 20x300s").unwrap();
+    /// assert_eq!(header.remove_all("HISTORY"), 2);
+    /// assert_eq!(header.count("HISTORY"), 0);
+    /// ```
     pub fn remove_all(&mut self, name: &str) -> usize {
         let before = self.keywords.len();
         self.keywords.retain(|k| !k.name.eq_ignore_ascii_case(name));
@@ -270,6 +468,16 @@ impl Header {
     ///
     /// [`Error::InvalidName`] or [`Error::Ambiguous`] for any entry; on error the
     /// header is unchanged.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_many([("IMAGETYP", "Master Dark"), ("OBJECT", "NGC 7000")])?;
+    /// assert_eq!(header.get_str("IMAGETYP")?, Some("Master Dark"));
+    /// assert_eq!(header.get_str("OBJECT")?, Some("NGC 7000"));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn set_many<'a, V, I>(&mut self, entries: I) -> Result<()>
     where
         V: IntoValue,
@@ -305,6 +513,15 @@ impl Header {
     ///
     /// [`Error::Ambiguous`] if any name is duplicated; on error the header is
     /// unchanged.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_many([("IMAGETYP", "Master Dark"), ("OBJECT", "NGC 7000")])?;
+    /// assert_eq!(header.remove_many(["IMAGETYP", "OBJECT"])?, 2);
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn remove_many<'a, I: IntoIterator<Item = &'a str>>(&mut self, names: I) -> Result<usize> {
         let names: Vec<&str> = names.into_iter().collect();
         for name in &names {
@@ -328,19 +545,49 @@ impl Header {
 
     // ----- property CRUD -------------------------------------------------
 
-    /// All `<Property>` entries, keyed by `id`.
+    /// All `<Property>` entries, keyed by `id`. Iteration is ordered by id,
+    /// not by document order.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_property("Observation:Object:Name", "NGC 7000").unwrap();
+    /// assert_eq!(header.properties().len(), 1);
+    /// ```
     #[must_use]
     pub fn properties(&self) -> &BTreeMap<String, Property> {
         &self.properties
     }
 
     /// A property's raw value text by `id`.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_property("Observation:Object:Name", "NGC 7000").unwrap();
+    /// assert_eq!(header.property("Observation:Object:Name"), Some("NGC 7000"));
+    /// ```
     #[must_use]
     pub fn property(&self, id: &str) -> Option<&str> {
         self.properties.get(id).map(|p| p.value.as_str())
     }
 
     /// A property value interpreted as `T`.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header
+    ///     .set_property_with_type("Instrument:Telescope:FocalLength", "0.53", "Float32")
+    ///     .unwrap();
+    /// assert_eq!(
+    ///     header.property_get::<f64>("Instrument:Telescope:FocalLength"),
+    ///     Some(0.53)
+    /// );
+    /// ```
     #[must_use]
     pub fn property_get<T: FromField>(&self, id: &str) -> Option<T> {
         self.properties
@@ -355,6 +602,15 @@ impl Header {
     /// # Errors
     ///
     /// [`Error::InvalidName`] if `id` is not a valid XISF property id.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_property("Observation:Object:Name", "NGC 7000")?;
+    /// assert_eq!(header.properties()["Observation:Object:Name"].type_, "String");
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn set_property(&mut self, id: impl Into<String>, value: impl Into<String>) -> Result<()> {
         let id = id.into();
         Self::validate_property_id(&id)?;
@@ -369,6 +625,18 @@ impl Header {
     /// # Errors
     ///
     /// [`Error::InvalidName`] if `id` is not a valid XISF property id.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_property_with_type("Instrument:Telescope:FocalLength", "0.53", "Float32")?;
+    /// assert_eq!(
+    ///     header.properties()["Instrument:Telescope:FocalLength"].type_,
+    ///     "Float32"
+    /// );
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn set_property_with_type(
         &mut self,
         id: impl Into<String>,
@@ -384,6 +652,15 @@ impl Header {
     }
 
     /// Remove a property by `id`. Returns `true` if it existed.
+    ///
+    /// ```
+    /// use xisf_header::Header;
+    ///
+    /// let mut header = Header::new();
+    /// header.set_property("Observation:Object:Name", "NGC 7000").unwrap();
+    /// assert!(header.remove_property("Observation:Object:Name"));
+    /// assert!(header.property("Observation:Object:Name").is_none());
+    /// ```
     pub fn remove_property(&mut self, id: &str) -> bool {
         self.properties.remove(id).is_some()
     }

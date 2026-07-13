@@ -1,11 +1,24 @@
 //! The [`Property`] record for XISF `<Property>` elements.
 
 /// A single XISF `<Property>`: its `type`, value text, and the optional
-/// `comment` and `format` attributes, all preserved verbatim so a property
-/// round-trips unchanged.
+/// `comment` and `format` attributes, all kept verbatim.
 ///
 /// Unlike FITS keywords, XISF property values are *not* FITS-formatted: they
 /// are stored raw, without any quote layer.
+///
+/// A parsed value round-trips unchanged, but its serialized *shape* may not: a
+/// `String` property written as long-form child text (`<Property
+/// id=…>text</Property>`) is re-emitted in `value=` attribute form. The parsed
+/// value is identical, so [`Header`](crate::Header) equality still holds.
+///
+/// ```
+/// use xisf_header::Property;
+///
+/// let p = Property::new("String", "NGC 7000");
+/// assert_eq!(p.type_, "String");
+/// assert_eq!(p.value, "NGC 7000");
+/// assert_eq!(p.comment, "");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Property {
@@ -13,8 +26,9 @@ pub struct Property {
     /// kept verbatim.
     #[cfg_attr(feature = "serde", serde(rename = "type"))]
     pub type_: String,
-    /// The raw value text (from the `value` attribute, or the element's child
-    /// text for the long `String` form).
+    /// The raw value text. Read from the `value` attribute, or from the
+    /// element's child text for the long `String` form; writes always emit it
+    /// as a `value` attribute.
     pub value: String,
     /// The `comment` attribute (empty when absent).
     pub comment: String,

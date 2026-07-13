@@ -34,32 +34,21 @@ impl Header {
     /// [`Error::InvalidSignature`] on a bad signature, [`Error::HeaderTooLarge`]
     /// if the declared header exceeds the cap, or an XML/UTF-8 error if the
     /// header itself is malformed.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    ///
+    /// let bytes = header.to_header_bytes(&StructuralHints::default());
+    /// let parsed = Header::parse(&bytes)?;
+    /// assert_eq!(parsed.get_str("IMAGETYP")?, Some("Master Dark"));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 16 {
-            return Err(Error::TooSmall {
-                needed: 16,
-                got: bytes.len(),
-            });
-        }
-        if &bytes[0..8] != SIGNATURE {
-            return Err(Error::InvalidSignature);
-        }
-        let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
-        // bytes[12..16] are reserved and ignored on read.
-        if xml_len > MAX_HEADER_LEN {
-            return Err(Error::HeaderTooLarge {
-                len: xml_len,
-                max: MAX_HEADER_LEN,
-            });
-        }
-        let end = 16 + xml_len;
-        if bytes.len() < end {
-            return Err(Error::TooSmall {
-                needed: end,
-                got: bytes.len(),
-            });
-        }
-        let xml = std::str::from_utf8(&bytes[16..end])?;
+        let (start, end) = split_preamble(bytes)?;
+        let xml = std::str::from_utf8(&bytes[start..end])?;
         parse_xml(xml)
     }
 
@@ -69,6 +58,20 @@ impl Header {
     /// # Errors
     ///
     /// Propagates I/O errors and any [`Header::parse`] error.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let path = std::env::temp_dir().join("xisf-header-doctest-read.xisf");
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// std::fs::write(&path, header.to_header_bytes(&StructuralHints::default()))?;
+    ///
+    /// let reloaded = Header::read_from_file(&path)?;
+    /// assert_eq!(reloaded.get_str("IMAGETYP")?, Some("Master Dark"));
+    /// # std::fs::remove_file(&path).ok();
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn read_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut file = File::open(path)?;
 
@@ -93,6 +96,36 @@ impl Header {
     }
 }
 
+/// Validate the 16-byte preamble and return the byte range `(start, end)` of
+/// the UTF-8 XML header within `bytes` (`start` is always 16).
+pub(crate) fn split_preamble(bytes: &[u8]) -> Result<(usize, usize)> {
+    if bytes.len() < 16 {
+        return Err(Error::TooSmall {
+            needed: 16,
+            got: bytes.len(),
+        });
+    }
+    if &bytes[0..8] != SIGNATURE {
+        return Err(Error::InvalidSignature);
+    }
+    let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    // bytes[12..16] are reserved and ignored on read.
+    if xml_len > MAX_HEADER_LEN {
+        return Err(Error::HeaderTooLarge {
+            len: xml_len,
+            max: MAX_HEADER_LEN,
+        });
+    }
+    let end = 16 + xml_len;
+    if bytes.len() < end {
+        return Err(Error::TooSmall {
+            needed: end,
+            got: bytes.len(),
+        });
+    }
+    Ok((16, end))
+}
+
 /// A `<Property>` opened as a start tag, which may carry its value as child
 /// text (the XISF long form for `String` properties) instead of a `value`
 /// attribute.
@@ -100,28 +133,90 @@ struct OpenProperty {
     id: Option<String>,
     prop: Property,
     has_value_attr: bool,
+    /// Byte offset (into the XML `&str`) where the opening `<Property` tag
+    /// began, so [`XmlIndex::property_spans`] can record the whole element.
+    span_start: usize,
 }
 
-/// Extract keywords and properties from the decoded XML header.
+/// Byte spans of the modeled elements in a parsed XML header, plus the
+/// single attachment location if the layout is one [`crate::writer`]'s
+/// byte-exact `update_file` splice can target. Spans are byte offsets into
+/// the XML `&str` passed to [`parse_xml_with_index`].
+pub(crate) struct XmlIndex {
+    /// Span of each named `<FITSKeyword>` element, in document order —
+    /// aligned 1:1 with [`Header::keywords`] by index, since both are built
+    /// by the same skip-if-nameless traversal.
+    pub keyword_spans: Vec<(usize, usize)>,
+    /// Span of each id'd `<Property>` element, in document order, paired
+    /// with its id (nameless `<Property>`s are skipped, like keywords).
+    pub property_spans: Vec<(String, usize, usize)>,
+    /// The data-bearing element's location and insertion point, or an error
+    /// reason when the document's attachment layout isn't one the splice
+    /// path can safely target.
+    pub image: std::result::Result<ImageInfo, String>,
+}
+
+/// Where a single `<Image location="attachment:OFFSET:SIZE">` element's
+/// attachment lives, and where to splice in newly-appended elements.
+pub(crate) struct ImageInfo {
+    /// Span of the `attachment:OFFSET:SIZE` text (excluding the surrounding
+    /// quotes) within the `location` attribute.
+    pub location_span: (usize, usize),
+    pub offset: usize,
+    pub size: usize,
+    /// Byte offset just before `</Image>`, where new `<FITSKeyword>`/
+    /// `<Property>` elements are appended. `None` when `<Image>` is
+    /// self-closing and so has no child content to insert into.
+    pub insertion_point: Option<usize>,
+}
+
+/// Extract keywords and properties from the decoded XML header, and
+/// [`XmlIndex`] and [`Header`] together.
 fn parse_xml(xml: &str) -> Result<Header> {
+    parse_xml_with_index(xml).map(|(header, _)| header)
+}
+
+/// Like [`parse_xml`], but also records the byte spans needed to splice a
+/// byte-exact update (see [`crate::splice`]).
+pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
     let mut reader = Reader::from_str(xml);
     let mut header = Header::new();
     let mut open_property: Option<OpenProperty> = None;
+    let mut keyword_spans = Vec::new();
+    let mut property_spans = Vec::new();
+
+    let mut image_count = 0usize;
+    let mut image_end_start: Option<usize> = None;
+    // (is_image, location value span, offset, size), for every element
+    // (other than FITSKeyword/Property) carrying a valid `attachment:N:N`
+    // `location` attribute — used to reject layouts with zero or multiple
+    // attachments.
+    let mut locations: Vec<(bool, usize, usize, usize, usize)> = Vec::new();
 
     loop {
-        match reader.read_event()? {
+        let start = reader.buffer_position() as usize;
+        let event = reader.read_event()?;
+        let end = reader.buffer_position() as usize;
+        match event {
             Event::Empty(e) => {
                 let local = e.local_name();
                 let tag = local.as_ref();
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     if let Some(kw) = parse_keyword(&e)? {
                         header.keywords.push(kw);
+                        keyword_spans.push((start, end));
                     }
                 } else if tag.eq_ignore_ascii_case(b"Property") {
                     let (id, prop, _) = parse_property(&e)?;
                     if let Some(id) = id {
+                        property_spans.push((id.clone(), start, end));
                         header.properties.insert(id, prop);
                     }
+                } else {
+                    if tag.eq_ignore_ascii_case(b"Image") {
+                        image_count += 1;
+                    }
+                    record_location(xml, start, end, tag, &mut locations);
                 }
             }
             Event::Start(e) => {
@@ -130,6 +225,7 @@ fn parse_xml(xml: &str) -> Result<Header> {
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     if let Some(kw) = parse_keyword(&e)? {
                         header.keywords.push(kw);
+                        keyword_spans.push((start, end));
                     }
                 } else if tag.eq_ignore_ascii_case(b"Property") {
                     let (id, prop, has_value_attr) = parse_property(&e)?;
@@ -137,7 +233,13 @@ fn parse_xml(xml: &str) -> Result<Header> {
                         id,
                         prop,
                         has_value_attr,
+                        span_start: start,
                     });
+                } else {
+                    if tag.eq_ignore_ascii_case(b"Image") {
+                        image_count += 1;
+                    }
+                    record_location(xml, start, end, tag, &mut locations);
                 }
             }
             Event::Text(t) => {
@@ -158,12 +260,18 @@ fn parse_xml(xml: &str) -> Result<Header> {
                     }
                 }
             }
-            Event::End(e) if e.local_name().as_ref().eq_ignore_ascii_case(b"Property") => {
-                if let Some(OpenProperty {
-                    id: Some(id), prop, ..
-                }) = open_property.take()
-                {
-                    header.properties.insert(id, prop);
+            Event::End(e) => {
+                let local = e.local_name();
+                let tag = local.as_ref();
+                if tag.eq_ignore_ascii_case(b"Property") {
+                    if let Some(open) = open_property.take() {
+                        if let Some(id) = open.id {
+                            property_spans.push((id.clone(), open.span_start, end));
+                            header.properties.insert(id, open.prop);
+                        }
+                    }
+                } else if tag.eq_ignore_ascii_case(b"Image") {
+                    image_end_start = Some(start);
                 }
             }
             Event::Eof => break,
@@ -171,7 +279,123 @@ fn parse_xml(xml: &str) -> Result<Header> {
         }
     }
 
-    Ok(header)
+    let image = resolve_image(image_count, &locations, image_end_start);
+    Ok((
+        header,
+        XmlIndex {
+            keyword_spans,
+            property_spans,
+            image,
+        },
+    ))
+}
+
+/// If `tag` carries a `location="attachment:OFFSET:SIZE"` attribute, record
+/// it. Only called for elements other than `FITSKeyword`/`Property`, which
+/// never legitimately carry `location` (and whose attribute *values* could
+/// otherwise coincidentally contain the text `location=`).
+fn record_location(
+    xml: &str,
+    start: usize,
+    end: usize,
+    tag: &[u8],
+    locations: &mut Vec<(bool, usize, usize, usize, usize)>,
+) {
+    let Some((value_start, value_end)) =
+        find_attr_value_span(&xml.as_bytes()[start..end], b"location")
+    else {
+        return;
+    };
+    let (abs_start, abs_end) = (start + value_start, start + value_end);
+    let Some((offset, size)) = xml
+        .get(abs_start..abs_end)
+        .and_then(parse_attachment_location)
+    else {
+        return;
+    };
+    locations.push((
+        tag.eq_ignore_ascii_case(b"Image"),
+        abs_start,
+        abs_end,
+        offset,
+        size,
+    ));
+}
+
+/// Decide whether the document has a splice-able single attachment: exactly
+/// one `<Image>` element, carrying the document's one `location="attachment:
+/// …">` attribute.
+fn resolve_image(
+    image_count: usize,
+    locations: &[(bool, usize, usize, usize, usize)],
+    image_end_start: Option<usize>,
+) -> std::result::Result<ImageInfo, String> {
+    if image_count == 0 {
+        return Err("no <Image> element found".to_owned());
+    }
+    if image_count > 1 {
+        return Err(format!(
+            "found {image_count} <Image> elements; update_file supports exactly one"
+        ));
+    }
+    if locations.len() != 1 {
+        return Err(format!(
+            "found {} attachment location(s); update_file supports exactly one",
+            locations.len()
+        ));
+    }
+    let (is_image, value_start, value_end, offset, size) = locations[0];
+    if !is_image {
+        return Err("the attachment location is not on the <Image> element".to_owned());
+    }
+    Ok(ImageInfo {
+        location_span: (value_start, value_end),
+        offset,
+        size,
+        insertion_point: image_end_start,
+    })
+}
+
+/// Parse an `attachment:OFFSET:SIZE` location value.
+fn parse_attachment_location(value: &str) -> Option<(usize, usize)> {
+    let rest = value.strip_prefix("attachment:")?;
+    let (offset, size) = rest.split_once(':')?;
+    Some((offset.parse().ok()?, size.parse().ok()?))
+}
+
+/// Find the byte span of `attr_name`'s value (excluding quotes) within a
+/// single start-tag's raw bytes, case-insensitive on the name. XISF
+/// attribute values never contain markup, so a plain scan (rather than a
+/// full attribute tokenizer) is sufficient.
+fn find_attr_value_span(tag: &[u8], attr_name: &[u8]) -> Option<(usize, usize)> {
+    let mut i = 0;
+    while i + attr_name.len() <= tag.len() {
+        if !tag[i..i + attr_name.len()].eq_ignore_ascii_case(attr_name) {
+            i += 1;
+            continue;
+        }
+        let before_ok = i == 0 || tag[i - 1].is_ascii_whitespace();
+        let mut j = i + attr_name.len();
+        if before_ok {
+            while j < tag.len() && tag[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if j < tag.len() && tag[j] == b'=' {
+                j += 1;
+                while j < tag.len() && tag[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if let Some(&quote) = tag.get(j).filter(|&&b| b == b'"' || b == b'\'') {
+                    let value_start = j + 1;
+                    if let Some(rel_end) = tag[value_start..].iter().position(|&b| b == quote) {
+                        return Some((value_start, value_start + rel_end));
+                    }
+                }
+            }
+        }
+        i += attr_name.len();
+    }
+    None
 }
 
 /// Read a `<FITSKeyword name= value= comment=>` element. An element without a

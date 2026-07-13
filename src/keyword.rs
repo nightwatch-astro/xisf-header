@@ -7,6 +7,14 @@ use crate::value::{FromField, IntoValue, Value};
 ///
 /// The value's on-disk kind (quoted string vs. bare literal) is preserved; see
 /// [`IntoValue`] for how the kind is chosen when you write one.
+///
+/// ```
+/// use xisf_header::FitsKeyword;
+///
+/// let kw = FitsKeyword::new("IMAGETYP", "Master Dark", "Type of image");
+/// assert_eq!(kw.value_str(), "Master Dark");
+/// assert_eq!(kw.comment, "Type of image");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FitsKeyword {

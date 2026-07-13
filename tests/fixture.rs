@@ -73,7 +73,7 @@ fn realistic_header_edit_round_trip_keeps_fidelity() {
     h.set("OBJECT", "North America Nebula").unwrap();
     h.remove("GAIN").unwrap();
 
-    let reparsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+    let reparsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
     assert_eq!(reparsed, h);
 
     // The edit took effect…

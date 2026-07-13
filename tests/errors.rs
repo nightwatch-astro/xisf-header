@@ -51,11 +51,35 @@ fn update_file_propagates_parse_errors_without_writing() {
     let path =
         std::env::temp_dir().join(format!("xisf-header-badupdate-{}.xisf", std::process::id()));
     std::fs::write(&path, b"garbage that is not xisf").unwrap();
-    let result = Header::update_file(&path, &StructuralHints::default(), |h| {
-        h.set("OBJECT", "M31").unwrap();
+    let result = Header::update_file(&path, |h| {
+        h.set("OBJECT", "M31")?;
+        Ok(())
     });
     assert!(result.is_err());
     // The malformed file is left untouched.
     assert_eq!(std::fs::read(&path).unwrap(), b"garbage that is not xisf");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn update_file_propagates_edit_closure_errors_without_writing() {
+    let path = std::env::temp_dir().join(format!(
+        "xisf-header-badupdate-closure-{}.xisf",
+        std::process::id()
+    ));
+    let hints = StructuralHints::default();
+    let mut header = Header::new();
+    header.set("IMAGETYP", "Master Dark").unwrap();
+    std::fs::write(&path, header.to_header_bytes(&hints)).unwrap();
+    let original = std::fs::read(&path).unwrap();
+
+    let result = Header::update_file(&path, |_h| {
+        Err(Error::InvalidName {
+            name: "x".to_owned(),
+            reason: "boom",
+        })
+    });
+    assert!(matches!(result, Err(Error::InvalidName { .. })));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
     std::fs::remove_file(&path).ok();
 }

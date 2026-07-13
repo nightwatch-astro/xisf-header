@@ -15,65 +15,26 @@ use crate::value::Value;
 const OFFSET_WIDTH: usize = 12;
 
 impl Header {
-    /// Serialize into a complete, self-contained XISF container: the 16-byte
-    /// preamble, the UTF-8 XML header (with an `<Image>` built from `hints`), and
-    /// a zero-filled data block matching the hinted geometry.
+    /// Serialize the header block — the 16-byte preamble plus the UTF-8 XML
+    /// header, with no data attached. The `<Image location>` points at the
+    /// byte offset immediately after the header, sized per `hints`, where a
+    /// caller assembling a new file appends the image data itself.
     ///
-    /// `Header::parse(&header.to_bytes(&hints))` round-trips back to `header`.
-    #[must_use]
-    pub fn to_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
-        self.build(hints, true)
-    }
-
-    /// Serialize just the header block — the preamble plus the XML header, with
-    /// no data attached. The `<Image location>` points at the byte offset
-    /// immediately after the header, where a caller doing in-place editing
-    /// appends the image data itself.
+    /// `Header::parse(&header.to_header_bytes(&hints))` round-trips back to
+    /// `header`.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark").unwrap();
+    /// let hints = StructuralHints::default();
+    ///
+    /// let header_only = header.to_header_bytes(&hints);
+    /// assert_eq!(Header::parse(&header_only).unwrap(), header);
+    /// ```
     #[must_use]
     pub fn to_header_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
-        self.build(hints, false)
-    }
-
-    /// Write a complete XISF container to `path`.
-    ///
-    /// **Warning:** the container is header-only, as produced by
-    /// [`Header::to_bytes`]: its data block is zero-filled from `hints`. An
-    /// existing file at `path` is replaced wholesale — including any pixel
-    /// data it held.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any I/O error from writing the file.
-    pub fn write_to_file<P: AsRef<Path>>(&self, path: P, hints: &StructuralHints) -> Result<()> {
-        std::fs::write(path, self.to_bytes(hints))?;
-        Ok(())
-    }
-
-    /// Read a file's header, apply `edit`, and write the container back.
-    ///
-    /// **Warning:** the rewritten file is a self-contained, header-only
-    /// container: its data block is **zero-filled** from `hints`, and XML
-    /// elements this crate does not model (`Metadata`, `Resolution`,
-    /// thumbnails, …) are not re-emitted. Do not use this on a file whose
-    /// pixel data must be kept — read the header, edit it, emit
-    /// [`Header::to_header_bytes`], and append the file's original data
-    /// yourself.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error from [`Header::read_from_file`] or the write.
-    pub fn update_file<P: AsRef<Path>>(
-        path: P,
-        hints: &StructuralHints,
-        edit: impl FnOnce(&mut Self),
-    ) -> Result<()> {
-        let mut header = Self::read_from_file(&path)?;
-        edit(&mut header);
-        header.write_to_file(&path, hints)
-    }
-
-    /// Assemble the container. `with_data` appends the zero-filled data block.
-    fn build(&self, hints: &StructuralHints, with_data: bool) -> Vec<u8> {
         let size = data_size(hints);
 
         // Two-pass render: the attachment offset depends on the header length,
@@ -86,15 +47,69 @@ impl Header {
         let xml = self.render_xml(hints, &offset_str, size);
         debug_assert_eq!(xml.len(), xml_len, "offset width must not change length");
 
-        let mut out = Vec::with_capacity(16 + xml.len() + if with_data { size } else { 0 });
+        let mut out = Vec::with_capacity(16 + xml.len());
         out.extend_from_slice(SIGNATURE);
         out.extend_from_slice(&u32::try_from(xml.len()).unwrap_or(u32::MAX).to_le_bytes());
         out.extend_from_slice(&[0u8; 4]); // reserved
         out.extend_from_slice(&xml);
-        if with_data {
-            out.resize(out.len() + size, 0);
-        }
         out
+    }
+
+    /// Read a file's header, apply `edit`, and splice the result back into
+    /// the file in place: byte-exact and data-preserving. Every byte outside
+    /// the edited `<FITSKeyword>`/`<Property>` elements — unmodeled XML
+    /// (`Metadata`, `Resolution`, thumbnails, …), whitespace, and the
+    /// attached data block — survives untouched. A no-op edit reproduces the
+    /// input file byte-for-byte. If the header's XML length changes, the
+    /// `<Image location="attachment:OFFSET:SIZE">` offset is recomputed and
+    /// the original data bytes are moved (unchanged) to the new offset;
+    /// `SIZE` never changes.
+    ///
+    /// This requires the common single-image layout: exactly one `<Image
+    /// location="attachment:…">` element. A file with zero or multiple
+    /// attachments (e.g. a `Thumbnail` alongside the `Image`), or whose edit
+    /// needs to add elements to a self-closing `<Image/>`, is rejected with
+    /// [`Error::Unsupported`](crate::Error::Unsupported) rather than risking
+    /// data loss.
+    ///
+    /// The write is atomic — a sibling temp file is renamed over the target
+    /// — and follows symlinks (a symlinked `path` stays a symlink to the same
+    /// target) and preserves the target's unix permission mode.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any error from reading or re-parsing the file, from
+    /// `edit`, or [`Error::Unsupported`](crate::Error::Unsupported) for a
+    /// layout the splice can't safely target. On error the file is left
+    /// untouched.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let path = std::env::temp_dir().join("xisf-header-doctest-update.xisf");
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// let hints = StructuralHints::default(); // 1x1x1 UInt8 = 1 byte of data
+    /// let mut container = header.to_header_bytes(&hints);
+    /// container.push(0xAB); // the caller's own pixel data
+    /// std::fs::write(&path, &container)?;
+    ///
+    /// Header::update_file(&path, |h| {
+    ///     h.set("OBJECT", "NGC 7000")?;
+    ///     Ok(())
+    /// })?;
+    ///
+    /// assert_eq!(std::fs::read(&path)?.last(), Some(&0xAB)); // pixel data preserved
+    /// let edited = Header::read_from_file(&path)?;
+    /// assert_eq!(edited.get_str("OBJECT")?, Some("NGC 7000"));
+    /// # std::fs::remove_file(&path).ok();
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
+    pub fn update_file<P: AsRef<Path>>(
+        path: P,
+        edit: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        crate::splice::update_file(path, edit)
     }
 
     /// Render the XML header. Writing to an in-memory `Vec` is infallible.
@@ -229,15 +244,12 @@ mod tests {
         let bytes = h.to_header_bytes(&hints);
         let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
         assert_eq!(bytes.len(), 16 + xml_len);
-
-        // The complete container appends exactly the hinted data size.
-        assert_eq!(h.to_bytes(&hints).len(), 16 + xml_len + data_size(&hints));
     }
 
     #[test]
     fn attachment_offset_is_fixed_width_and_correct() {
         let h = Header::new();
-        let bytes = h.to_bytes(&StructuralHints::default());
+        let bytes = h.to_header_bytes(&StructuralHints::default());
         let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
         let xml = std::str::from_utf8(&bytes[16..16 + xml_len]).unwrap();
         let offset = format!("{:0width$}", 16 + xml_len, width = OFFSET_WIDTH);
@@ -253,7 +265,7 @@ mod tests {
         h.set("OBJECT", "a<b&\"c'd").unwrap();
         h.set_comment("OBJECT", "less < & \"quoted\"").unwrap();
         h.set_property("Notes:Text", "x<y&z").unwrap();
-        let parsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+        let parsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
         assert_eq!(parsed, h);
         assert_eq!(parsed.get_str("OBJECT").unwrap(), Some("a<b&\"c'd"));
         assert_eq!(parsed.property("Notes:Text"), Some("x<y&z"));
@@ -262,7 +274,7 @@ mod tests {
     #[test]
     fn empty_header_round_trips() {
         let h = Header::new();
-        let parsed = Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap();
+        let parsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
         assert_eq!(parsed, h);
     }
 }

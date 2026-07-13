@@ -16,21 +16,46 @@ the UTF-8 XML header, and never reads image/pixel data.
 
 ## Features
 
-- **Parse** an XISF header from bytes or a file. The `XISF0100` signature, the
-  little-endian XML-length field (capped at 8 MiB), and UTF-8 encoding are
-  validated.
-- **Strict keyword access.** A bare name must be unique or the accessor returns
-  `Error::Ambiguous`; repeated keywords (e.g. `HISTORY`) are addressed with an
-  `(name, n)` key or the `get_all`/`count` helpers.
-- **Typed reads and writes.** One generic `get::<T>` over the open
-  [`FromField`] trait (`String`, `f64`, `i64`, `u32`, `bool`, and a date/time),
-  with `get_str`/`get_f64`/… wrappers; writes take `impl IntoValue`, so the Rust
-  type chooses string vs. bare-literal formatting.
-- **`<Property>` round-trip.** XISF properties keep their `type`, `comment`,
-  and `format` attributes verbatim; `String` properties stored as child text
-  are read. Values are stored raw (XISF properties are not FITS-quoted).
-- **Two serialization outputs.** `to_bytes(&hints)` for a self-contained
-  container and `to_header_bytes(&hints)` for the header block alone.
+- **Parse** an XISF header from bytes or a file with
+  [`Header::parse`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.parse)
+  /
+  [`Header::read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file).
+  The `XISF0100` signature, the little-endian XML-length field (capped at 8
+  MiB), and UTF-8 encoding are validated.
+- **Strict keyword access.** A bare name must be unique or the accessor
+  returns
+  [`Error::Ambiguous`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Ambiguous);
+  repeated keywords (e.g. `HISTORY`) are addressed with an
+  [`(name, n)` key](https://docs.rs/xisf-header/latest/xisf_header/enum.Key.html)
+  or the
+  [`get_all`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.get_all)/[`count`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.count)
+  helpers.
+- **Typed reads and writes.** One generic
+  [`get::<T>`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.get)
+  over the open
+  [`FromField`](https://docs.rs/xisf-header/latest/xisf_header/trait.FromField.html)
+  trait (`String`, `f64`, `i64`, `u32`, `bool`, and a date/time), with
+  `get_str`/`get_f64`/… wrappers; writes take
+  [`impl IntoValue`](https://docs.rs/xisf-header/latest/xisf_header/trait.IntoValue.html),
+  so the Rust type chooses string vs. bare-literal formatting.
+- **[`<Property>`](https://docs.rs/xisf-header/latest/xisf_header/struct.Property.html)
+  round-trip.** XISF properties keep their `type`, `comment`, and `format`
+  attributes verbatim. A `String` property written as child text
+  (`<Property id=…>text</Property>`) is read the same as the attribute form,
+  and writes normalize it to a `value=` attribute. Values are stored raw
+  (XISF properties are not FITS-quoted).
+- **Two write paths.** Assemble a new file with
+  [`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
+  plus your own data, or edit an existing file in place with
+  [`update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file),
+  which splices only the changed keywords/properties into the file's raw
+  bytes — byte-exact and data-preserving.
+- **Enumerate and bulk-edit.** Read keywords in document order with
+  [`keywords`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.keywords)/[`iter`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.iter);
+  apply atomic batches with
+  [`set_many`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_many)/[`remove_many`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove_many),
+  and clear every occurrence of a repeated name with
+  [`remove_all`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove_all).
 - No `unsafe`. Dependencies are pure Rust (no C/sys crates): `quick-xml`,
   `thiserror`, `time`, and optional `serde`. MSRV 1.82.
 
@@ -43,7 +68,8 @@ xisf-header = "0.2"
 
 ### Optional features
 
-- **`serde`** — derive `Serialize`/`Deserialize` on `Header`, `FitsKeyword`,
+- **`serde`** — derive `Serialize`/`Deserialize` on `Header`,
+  [`FitsKeyword`](https://docs.rs/xisf-header/latest/xisf_header/struct.FitsKeyword.html),
   `Property`, and the value types:
 
   ```toml
@@ -53,6 +79,10 @@ xisf-header = "0.2"
 ## Usage
 
 ### Parse a header and read keywords
+
+[`Header::parse`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.parse)
+reads a byte buffer into a
+[`Header`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html).
 
 ```rust,no_run
 use xisf_header::Header;
@@ -71,6 +101,15 @@ let focal_length_m = header.property_get::<f64>("Instrument:Telescope:FocalLengt
 ```
 
 ### Create, read, update, delete
+
+[`Header::new`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.new)
+starts empty;
+[`set`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set),
+[`set_comment`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_comment),
+[`set_with_comment`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_with_comment),
+and
+[`remove`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove)
+edit it in place.
 
 ```rust
 use xisf_header::Header;
@@ -95,6 +134,11 @@ header.remove("GAIN")?; // delete
 
 ### Repeated keywords
 
+[`append`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.append)
+adds an occurrence unconditionally; select one back with an
+[`(name, n)`](https://docs.rs/xisf-header/latest/xisf_header/enum.Key.html)
+key.
+
 ```rust
 use xisf_header::Header;
 
@@ -110,6 +154,15 @@ assert_eq!(header.count("HISTORY"), 2);
 ```
 
 ### XISF properties
+
+[`set_property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property)
+and
+[`set_property_with_type`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property_with_type)
+write a
+[`Property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Property.html)
+entry;
+[`remove_property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove_property)
+deletes one by id.
 
 ```rust
 use xisf_header::Header;
@@ -129,6 +182,12 @@ assert_eq!(header.properties()["Instrument:Telescope:FocalLength"].type_, "Float
 
 ### Controlled numeric formatting
 
+[`Fixed`](https://docs.rs/xisf-header/latest/xisf_header/struct.Fixed.html)
+and
+[`Sci`](https://docs.rs/xisf-header/latest/xisf_header/struct.Sci.html)
+wrap an `f64` for fixed-point or scientific-notation output; both implement
+[`IntoValue`](https://docs.rs/xisf-header/latest/xisf_header/trait.IntoValue.html).
+
 ```rust
 use xisf_header::{Fixed, Header};
 
@@ -138,7 +197,14 @@ assert_eq!(header.get_str("EXPTIME")?, Some("300.00"));
 # Ok::<(), xisf_header::Error>(())
 ```
 
-### Write a container and round-trip through a file
+### Assemble a new file
+
+[`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
+emits the preamble plus XML header, using
+[`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html)
+to fill in the `<Image>` geometry and to size the `location` attribute's
+attachment offset; append your own pixel data (sized to match `hints`) to
+complete the container.
 
 ```rust,no_run
 use xisf_header::{Header, StructuralHints};
@@ -146,13 +212,11 @@ use xisf_header::{Header, StructuralHints};
 let mut header = Header::new();
 header.set("IMAGETYP", "Master Dark")?;
 
-let hints = StructuralHints::default();
+let hints = StructuralHints::default(); // 1x1x1 8-bit grayscale = 1 byte
+let mut container = header.to_header_bytes(&hints);
+container.push(0); // the caller's own pixel data
+std::fs::write("out.xisf", &container)?;
 
-// Emit a complete container, or just the header block.
-let bytes = header.to_bytes(&hints);
-assert_eq!(Header::parse(&bytes)?, header);
-
-header.write_to_file("out.xisf", &hints)?;
 let reloaded = Header::read_from_file("out.xisf")?;
 assert_eq!(reloaded, header);
 # std::fs::remove_file("out.xisf").ok();
@@ -161,30 +225,40 @@ assert_eq!(reloaded, header);
 
 ### Edit a file's header in place
 
-```rust,no_run
-use xisf_header::{Header, StructuralHints};
+[`Header::update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
+reads a file's header, applies an edit closure, and splices the result back
+into the file. It is byte-exact and data-preserving: everything outside the
+edited `<FITSKeyword>`/`<Property>` elements — unmodeled XML (`Metadata`,
+`Resolution`, thumbnails, …), whitespace, and the attached pixel data —
+survives untouched, and a no-op edit reproduces the file byte-for-byte. If an
+edit changes the header's length, the `<Image location>` offset is
+recomputed and the original data is moved (unchanged) to the new offset.
 
-Header::update_file("out.xisf", &StructuralHints::default(), |h| {
-    h.set("OBJECT", "M31").unwrap();
-    h.remove("TEMP").unwrap();
+```rust,no_run
+use xisf_header::Header;
+
+Header::update_file("out.xisf", |h| {
+    h.set("OBJECT", "NGC 7000")?;
+    Ok(())
 })?;
 # Ok::<(), xisf_header::Error>(())
 ```
 
-> **Warning:** `to_bytes`/`write_to_file`/`update_file` emit a self-contained,
-> header-only container: the data block is **zero-filled** from
-> `StructuralHints`, and XML elements the crate does not model (`Metadata`,
-> `Resolution`, thumbnails, …) are not re-emitted. Do not point them at files
-> whose pixel data must be kept. To edit a real image's header, emit
-> `to_header_bytes(&hints)` and append the file's original data yourself.
+`update_file` targets the common single-image layout: exactly one `<Image
+location="attachment:…">` element. A file with zero or multiple attachments
+(e.g. a `Thumbnail` alongside the `Image`) is rejected with
+[`Error::Unsupported`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Unsupported)
+rather than risking data loss.
 
 ## Documentation
 
-Full API documentation is generated from the source doc comments and published
-at **[docs.rs/xisf-header](https://docs.rs/xisf-header)** for every release
-(all features enabled). Build it locally with `cargo doc --no-deps
---all-features --open`. Every public item is documented; CI fails the build on
-missing or broken documentation.
+- **[Quickstart guide](docs/guide.md)** — a task-oriented walkthrough backed
+  by [`examples/quickstart.rs`](examples/quickstart.rs).
+- **[docs.rs/xisf-header](https://docs.rs/xisf-header)** — full API
+  documentation generated from the source doc comments, published for every
+  release (all features enabled). Build it locally with `cargo doc --no-deps
+  --all-features --open`. Every public item is documented; CI fails the build
+  on missing or broken documentation.
 
 ## License
 
