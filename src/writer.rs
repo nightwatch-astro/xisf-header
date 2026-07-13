@@ -20,6 +20,16 @@ impl Header {
     /// a zero-filled data block matching the hinted geometry.
     ///
     /// `Header::parse(&header.to_bytes(&hints))` round-trips back to `header`.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark").unwrap();
+    ///
+    /// let bytes = header.to_bytes(&StructuralHints::default());
+    /// assert_eq!(Header::parse(&bytes).unwrap(), header);
+    /// ```
     #[must_use]
     pub fn to_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
         self.build(hints, true)
@@ -29,6 +39,18 @@ impl Header {
     /// no data attached. The `<Image location>` points at the byte offset
     /// immediately after the header, where a caller doing in-place editing
     /// appends the image data itself.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark").unwrap();
+    /// let hints = StructuralHints::default();
+    ///
+    /// let header_only = header.to_header_bytes(&hints);
+    /// assert!(header_only.len() < header.to_bytes(&hints).len());
+    /// assert_eq!(Header::parse(&header_only).unwrap(), header);
+    /// ```
     #[must_use]
     pub fn to_header_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
         self.build(hints, false)
@@ -44,6 +66,18 @@ impl Header {
     /// # Errors
     ///
     /// Propagates any I/O error from writing the file.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let path = std::env::temp_dir().join("xisf-header-doctest-write.xisf");
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// header.write_to_file(&path, &StructuralHints::default())?;
+    /// assert_eq!(Header::read_from_file(&path)?, header);
+    /// # std::fs::remove_file(&path).ok();
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P, hints: &StructuralHints) -> Result<()> {
         std::fs::write(path, self.to_bytes(hints))?;
         Ok(())
@@ -62,6 +96,24 @@ impl Header {
     /// # Errors
     ///
     /// Propagates any error from [`Header::read_from_file`] or the write.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let path = std::env::temp_dir().join("xisf-header-doctest-update.xisf");
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// header.write_to_file(&path, &StructuralHints::default())?;
+    ///
+    /// Header::update_file(&path, &StructuralHints::default(), |h| {
+    ///     h.set("OBJECT", "NGC 7000").unwrap();
+    /// })?;
+    ///
+    /// let edited = Header::read_from_file(&path)?;
+    /// assert_eq!(edited.get_str("OBJECT")?, Some("NGC 7000"));
+    /// # std::fs::remove_file(&path).ok();
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn update_file<P: AsRef<Path>>(
         path: P,
         hints: &StructuralHints,

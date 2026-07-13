@@ -6,6 +6,19 @@ use thiserror::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors that can occur while parsing, reading, or writing an XISF header.
+///
+/// ```
+/// use xisf_header::{Error, Header};
+///
+/// let mut header = Header::new();
+/// header.append("HISTORY", "reduced with siril").unwrap();
+/// header.append("HISTORY", "stacked 20x300s").unwrap();
+///
+/// assert!(matches!(
+///     header.get_str("HISTORY"),
+///     Err(Error::Ambiguous { count: 2, .. })
+/// ));
+/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {

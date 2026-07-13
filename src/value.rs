@@ -7,6 +7,15 @@ use time::PrimitiveDateTime;
 /// XISF stores FITS keyword values with FITS formatting conventions: string
 /// values are single-quoted, everything else (numbers, logicals) is bare. The
 /// distinction is preserved so a value round-trips as the same kind it was.
+///
+/// ```
+/// use xisf_header::Value;
+///
+/// let string_value = Value::Str("Master Dark".to_owned());
+/// let literal_value = Value::Literal("300".to_owned());
+/// assert_eq!(string_value.text(), "Master Dark");
+/// assert_eq!(literal_value.text(), "300");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Value {
@@ -38,6 +47,14 @@ impl Default for Value {
 /// implement it for your own type to call `header.get::<MyType>(key)`.
 /// Returning `None` means "the value cannot be read as this type" (treated as
 /// absence, never an error).
+///
+/// ```
+/// use xisf_header::FromField;
+///
+/// assert_eq!(f64::from_field("300"), Some(300.0));
+/// assert_eq!(bool::from_field("T"), Some(true));
+/// assert_eq!(i64::from_field("not a number"), None);
+/// ```
 pub trait FromField: Sized {
     /// Parse the value text into `Self`, or `None` if it does not apply.
     fn from_field(text: &str) -> Option<Self>;
@@ -125,6 +142,13 @@ fn parse_datetime(text: &str) -> Option<PrimitiveDateTime> {
 /// Produce a [`Value`] for a write, with the on-disk kind chosen by the Rust
 /// type: strings become quoted string values, numbers and logicals become bare
 /// literals. Use [`Literal`], [`Fixed`], or [`Sci`] for controlled formatting.
+///
+/// ```
+/// use xisf_header::{IntoValue, Value};
+///
+/// assert_eq!("Master Dark".into_value(), Value::Str("Master Dark".to_owned()));
+/// assert_eq!(300.0.into_value().text(), "300.0");
+/// ```
 pub trait IntoValue {
     /// Convert `self` into a serializable [`Value`].
     fn into_value(self) -> Value;
@@ -174,6 +198,15 @@ impl IntoValue for bool {
 
 /// Write a value as a bare literal exactly as given (escape hatch for
 /// pre-formatted or vendor-specific tokens).
+///
+/// ```
+/// use xisf_header::{Header, Literal};
+///
+/// let mut header = Header::new();
+/// header.set("FLAGS", Literal("0x1F".to_owned()))?;
+/// assert_eq!(header.get_str("FLAGS")?, Some("0x1F"));
+/// # Ok::<(), xisf_header::Error>(())
+/// ```
 #[derive(Debug, Clone)]
 pub struct Literal(pub String);
 
@@ -184,6 +217,15 @@ impl IntoValue for Literal {
 }
 
 /// Write a float in fixed-point notation with `decimals` fractional digits.
+///
+/// ```
+/// use xisf_header::{Fixed, Header};
+///
+/// let mut header = Header::new();
+/// header.set("EXPTIME", Fixed(300.0, 2))?;
+/// assert_eq!(header.get_str("EXPTIME")?, Some("300.00"));
+/// # Ok::<(), xisf_header::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Fixed(pub f64, pub usize);
 
@@ -195,6 +237,15 @@ impl IntoValue for Fixed {
 
 /// Write a float in scientific notation with `sig_digits` significant digits,
 /// using the FITS `E` exponent marker.
+///
+/// ```
+/// use xisf_header::{Header, Sci};
+///
+/// let mut header = Header::new();
+/// header.set("FLUX", Sci(1234.5, 3))?;
+/// assert_eq!(header.get_str("FLUX")?, Some("1.23E3"));
+/// # Ok::<(), xisf_header::Error>(())
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct Sci(pub f64, pub usize);
 

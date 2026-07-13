@@ -34,6 +34,18 @@ impl Header {
     /// [`Error::InvalidSignature`] on a bad signature, [`Error::HeaderTooLarge`]
     /// if the declared header exceeds the cap, or an XML/UTF-8 error if the
     /// header itself is malformed.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    ///
+    /// let bytes = header.to_bytes(&StructuralHints::default());
+    /// let parsed = Header::parse(&bytes)?;
+    /// assert_eq!(parsed.get_str("IMAGETYP")?, Some("Master Dark"));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 16 {
             return Err(Error::TooSmall {
@@ -69,6 +81,20 @@ impl Header {
     /// # Errors
     ///
     /// Propagates I/O errors and any [`Header::parse`] error.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let path = std::env::temp_dir().join("xisf-header-doctest-read.xisf");
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// header.write_to_file(&path, &StructuralHints::default())?;
+    ///
+    /// let reloaded = Header::read_from_file(&path)?;
+    /// assert_eq!(reloaded.get_str("IMAGETYP")?, Some("Master Dark"));
+    /// # std::fs::remove_file(&path).ok();
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
     pub fn read_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut file = File::open(path)?;
 

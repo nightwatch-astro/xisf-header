@@ -6,6 +6,15 @@
 ///
 /// Unlike FITS keywords, XISF property values are *not* FITS-formatted: they
 /// are stored raw, without any quote layer.
+///
+/// ```
+/// use xisf_header::Property;
+///
+/// let p = Property::new("String", "NGC 7000");
+/// assert_eq!(p.type_, "String");
+/// assert_eq!(p.value, "NGC 7000");
+/// assert_eq!(p.comment, "");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Property {
