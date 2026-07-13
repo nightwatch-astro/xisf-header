@@ -47,6 +47,12 @@ the UTF-8 XML header, and never reads image/pixel data.
   for a self-contained container and
   [`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
   for the header block alone.
+- **Enumerate and bulk-edit.** Read keywords in document order with
+  [`keywords`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.keywords)/[`iter`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.iter);
+  apply atomic batches with
+  [`set_many`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_many)/[`remove_many`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove_many),
+  and clear every occurrence of a repeated name with
+  [`remove_all`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove_all).
 - No `unsafe`. Dependencies are pure Rust (no C/sys crates): `quick-xml`,
   `thiserror`, `time`, and optional `serde`. MSRV 1.82.
 
@@ -59,7 +65,8 @@ xisf-header = "0.2"
 
 ### Optional features
 
-- **`serde`** — derive `Serialize`/`Deserialize` on `Header`, `FitsKeyword`,
+- **`serde`** — derive `Serialize`/`Deserialize` on `Header`,
+  [`FitsKeyword`](https://docs.rs/xisf-header/latest/xisf_header/struct.FitsKeyword.html),
   `Property`, and the value types:
 
   ```toml
@@ -96,6 +103,7 @@ let focal_length_m = header.property_get::<f64>("Instrument:Telescope:FocalLengt
 starts empty;
 [`set`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set),
 [`set_comment`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_comment),
+[`set_with_comment`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_with_comment),
 and
 [`remove`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove)
 edit it in place.
@@ -149,7 +157,9 @@ and
 [`set_property_with_type`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property_with_type)
 write a
 [`Property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Property.html)
-entry.
+entry;
+[`remove_property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.remove_property)
+deletes one by id.
 
 ```rust
 use xisf_header::Header;

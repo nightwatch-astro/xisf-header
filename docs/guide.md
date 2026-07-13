@@ -1,9 +1,9 @@
 # Quickstart guide
 
 A task-oriented walkthrough for building, editing, and round-tripping an XISF
-header. The full runnable source is
+header. The snippets below mirror
 [`examples/quickstart.rs`](../examples/quickstart.rs) (`cargo run --example
-quickstart`); every snippet below is an excerpt of it, in order.
+quickstart`), which runs the same steps end to end against a temporary file.
 
 The walkthrough builds one header for a master dark calibration frame and
 carries it through every capability in this crate.
