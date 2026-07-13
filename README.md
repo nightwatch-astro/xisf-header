@@ -44,11 +44,12 @@ the UTF-8 XML header, and never reads image/pixel data.
   (`<Property id=…>text</Property>`) is read the same as the attribute form,
   and writes normalize it to a `value=` attribute. Values are stored raw
   (XISF properties are not FITS-quoted).
-- **Two serialization outputs.**
-  [`to_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_bytes)
-  for a self-contained container and
+- **Two write paths.** Assemble a new file with
   [`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
-  for the header block alone.
+  plus your own data, or edit an existing file in place with
+  [`update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file),
+  which splices only the changed keywords/properties into the file's raw
+  bytes — byte-exact and data-preserving.
 - **Enumerate and bulk-edit.** Read keywords in document order with
   [`keywords`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.keywords)/[`iter`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.iter);
   apply atomic batches with
@@ -196,15 +197,14 @@ assert_eq!(header.get_str("EXPTIME")?, Some("300.00"));
 # Ok::<(), xisf_header::Error>(())
 ```
 
-### Write a container and round-trip through a file
+### Assemble a new file
 
-[`to_bytes`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_bytes),
-[`write_to_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.write_to_file),
-and
-[`read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file)
-use
+[`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
+emits the preamble plus XML header, using
 [`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html)
-to fill in the `<Image>` geometry.
+to fill in the `<Image>` geometry and to size the `location` attribute's
+attachment offset; append your own pixel data (sized to match `hints`) to
+complete the container.
 
 ```rust,no_run
 use xisf_header::{Header, StructuralHints};
@@ -212,13 +212,11 @@ use xisf_header::{Header, StructuralHints};
 let mut header = Header::new();
 header.set("IMAGETYP", "Master Dark")?;
 
-let hints = StructuralHints::default();
+let hints = StructuralHints::default(); // 1x1x1 8-bit grayscale = 1 byte
+let mut container = header.to_header_bytes(&hints);
+container.push(0); // the caller's own pixel data
+std::fs::write("out.xisf", &container)?;
 
-// Emit a complete container, or just the header block.
-let bytes = header.to_bytes(&hints);
-assert_eq!(Header::parse(&bytes)?, header);
-
-header.write_to_file("out.xisf", &hints)?;
 let reloaded = Header::read_from_file("out.xisf")?;
 assert_eq!(reloaded, header);
 # std::fs::remove_file("out.xisf").ok();
@@ -228,27 +226,30 @@ assert_eq!(reloaded, header);
 ### Edit a file's header in place
 
 [`Header::update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
-reads a file's header, applies an edit closure, and writes the container back.
+reads a file's header, applies an edit closure, and splices the result back
+into the file. It is byte-exact and data-preserving: everything outside the
+edited `<FITSKeyword>`/`<Property>` elements — unmodeled XML (`Metadata`,
+`Resolution`, thumbnails, …), whitespace, and the attached pixel data —
+survives untouched, and a no-op edit reproduces the file byte-for-byte. If an
+edit changes the header's length, the `<Image location>` offset is
+recomputed and the original data is moved (unchanged) to the new offset.
 
 ```rust,no_run
-use xisf_header::{Header, StructuralHints};
+use xisf_header::Header;
 
-Header::update_file("out.xisf", &StructuralHints::default(), |h| {
-    h.set("OBJECT", "M31").unwrap();
-    h.remove("TEMP").unwrap();
+Header::update_file("out.xisf", |h| {
+    h.set("OBJECT", "M31")?;
+    h.remove("TEMP")?;
+    Ok(())
 })?;
 # Ok::<(), xisf_header::Error>(())
 ```
 
-> **Warning:** `to_bytes`/`write_to_file`/`update_file` emit a self-contained,
-> header-only container: the data block is **zero-filled** from
-> `StructuralHints`, and XML elements the crate does not model (`Metadata`,
-> `Resolution`, thumbnails, …) are not re-emitted. Because `write_to_file` and
-> `update_file` replace the file at their path wholesale, do not run them
-> against a file whose pixel data must be kept. To edit a real image's header,
-> emit
-> [`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
-> and append the file's original data yourself.
+`update_file` targets the common single-image layout: exactly one `<Image
+location="attachment:…">` element. A file with zero or multiple attachments
+(e.g. a `Thumbnail` alongside the `Image`) is rejected with
+[`Error::Unsupported`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Unsupported)
+rather than risking data loss.
 
 ## Documentation
 

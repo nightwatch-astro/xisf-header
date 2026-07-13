@@ -22,14 +22,18 @@ fn main() -> Result<(), xisf_header::Error> {
     header.set_property("Observation:Object:Name", "NGC 7000")?;
     header.set_property_with_type("Instrument:Telescope:FocalLength", "0.53", "Float32")?;
 
-    // 4. Serialize to a self-contained container and confirm it round-trips.
+    // 4. Serialize the header block and confirm it round-trips.
     let hints = StructuralHints::default();
-    let bytes = header.to_bytes(&hints);
-    assert_eq!(Header::parse(&bytes)?, header);
+    let header_bytes = header.to_header_bytes(&hints);
+    assert_eq!(Header::parse(&header_bytes)?, header);
 
-    // 5. Round-trip through a real file on disk.
+    // 5. Assemble a full container by appending the caller's own pixel data
+    //    (StructuralHints::default() is 1x1x1 8-bit grayscale = 1 byte), then
+    //    round-trip through a real file on disk.
     let path = std::env::temp_dir().join("xisf-header-quickstart.xisf");
-    header.write_to_file(&path, &hints)?;
+    let mut container = header_bytes;
+    container.push(0);
+    std::fs::write(&path, &container)?;
     let reloaded = Header::read_from_file(&path)?;
     assert_eq!(reloaded, header);
 
@@ -47,10 +51,13 @@ fn main() -> Result<(), xisf_header::Error> {
         Some(0.53)
     );
 
-    // 7. Edit the file's header in place, then clean up.
-    Header::update_file(&path, &hints, |h| {
-        h.set("OBJECT", "NGC 7000").unwrap();
+    // 7. Edit the file's header in place — byte-exact, pixel data untouched —
+    //    then clean up.
+    Header::update_file(&path, |h| {
+        h.set("OBJECT", "NGC 7000")?;
+        Ok(())
     })?;
+    assert_eq!(std::fs::read(&path)?.last(), Some(&0)); // pixel byte preserved
     std::fs::remove_file(&path).ok();
 
     println!("quickstart header round-tripped successfully");

@@ -50,7 +50,7 @@ fn structural_hints_round_trip_through_json() {
 #[test]
 fn serialized_header_survives_container_round_trip_too() {
     let h = sample();
-    let container = h.to_bytes(&StructuralHints::default());
+    let container = h.to_header_bytes(&StructuralHints::default());
     let parsed = Header::parse(&container).unwrap();
     let json = serde_json::to_string(&parsed).unwrap();
     let back: Header = serde_json::from_str(&json).unwrap();

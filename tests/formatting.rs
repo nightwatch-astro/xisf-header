@@ -4,7 +4,7 @@
 use xisf_header::{Fixed, Header, Literal, Sci, StructuralHints};
 
 fn round_trip(h: &Header) -> Header {
-    Header::parse(&h.to_bytes(&StructuralHints::default())).unwrap()
+    Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap()
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn literal_escape_hatch_is_emitted_verbatim() {
     let parsed = round_trip(&h);
     assert_eq!(parsed.get_str("VENDOR").unwrap(), Some("0x1F"));
     // A literal is not a string value: no quote layer appears in the XML.
-    let bytes = h.to_bytes(&StructuralHints::default());
+    let bytes = h.to_header_bytes(&StructuralHints::default());
     let xml = std::str::from_utf8(&bytes[16..]).unwrap();
     assert!(xml.contains(r#"value="0x1F""#));
 }

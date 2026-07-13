@@ -22,10 +22,12 @@ src/
   value.rs    Value + FromField (read) + IntoValue (write) + Literal/Fixed/Sci
   keyword.rs  FitsKeyword record
   header.rs   Header: strict CRUD, typed get/set, atomic batch, property CRUD, StructuralHints
-  reader.rs   Header::parse / read_from_file (preamble validation + XML extraction)
-  writer.rs   Header::to_bytes / to_header_bytes / write_to_file / update_file
+  reader.rs   Header::parse / read_from_file (preamble validation + XML extraction, incl. byte-span index)
+  writer.rs   Header::to_header_bytes / update_file (delegates the splice to splice.rs)
+  splice.rs   byte-exact update_file: diff + splice only edited elements, preserving unmodeled XML + data
 tests/
-  roundtrip.rs   integration tests (signature, round-trip, strict access, file I/O, CRUD)
+  roundtrip.rs        integration tests (signature, round-trip, strict access, file I/O, CRUD)
+  integration_xisf.rs byte-exact update_file against real XISF files (unmodeled XML + real data block)
 specs/
   001-xisf-header/spec.md   spec of the read/edit/write requirements
 docs/
@@ -48,8 +50,9 @@ docs/
   (de)serialization. Prefer mature, pure-Rust crates (no C/sys — MSVC-safe).
 - Keyword access is strict: a bare name must be unique or accessors return
   `Error::Ambiguous`; repeats are addressed with an `(name, n)` key.
-- Header-only: never read or write pixel/attachment payloads beyond the
-  placeholder data block `to_bytes` writes to make a container self-contained.
+- Header-only in what it *models*: keyword/property values, never pixel
+  data. `update_file` does move the attached data block's raw bytes (to keep
+  a file byte-exact after an edit), but never interprets or decodes them.
 - Keep it simple and idiomatic; small, focused modules.
 
 ## MSRV

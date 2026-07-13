@@ -63,36 +63,39 @@ header.set_property_with_type("Instrument:Telescope:FocalLength", "0.53", "Float
 # Ok::<(), xisf_header::Error>(())
 ```
 
-## Serialize and round-trip through bytes
+## Serialize and assemble a new file
 
-[`Header::to_bytes`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_bytes)
-emits a complete, self-contained XISF container from
-[`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html);
+[`Header::to_header_bytes`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
+emits the preamble plus XML header from
+[`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html),
+with the `<Image location>` attachment offset already sized to fit data
+matching those hints;
 [`Header::parse`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.parse)
-reads one back.
+reads one back. Append your own pixel data to complete the container.
 
 ```rust,no_run
 # use xisf_header::{Header, StructuralHints};
 # let header = Header::new();
-let hints = StructuralHints::default();
-let bytes = header.to_bytes(&hints);
-assert_eq!(Header::parse(&bytes)?, header);
+let hints = StructuralHints::default(); // 1x1x1 8-bit grayscale = 1 byte
+let mut container = header.to_header_bytes(&hints);
+container.push(0); // the caller's own pixel data
+assert_eq!(Header::parse(&container)?, header);
 # Ok::<(), xisf_header::Error>(())
 ```
 
 ## Round-trip through a file
 
-[`Header::write_to_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.write_to_file)
-and
-[`Header::read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file)
-do the same round-trip against a path.
+Write the assembled container and read it back with
+[`Header::read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file).
 
 ```rust,no_run
 # use xisf_header::{Header, StructuralHints};
 # let header = Header::new();
 # let hints = StructuralHints::default();
 let path = "master-dark.xisf";
-header.write_to_file(path, &hints)?;
+let mut container = header.to_header_bytes(&hints);
+container.push(0);
+std::fs::write(path, &container)?;
 let reloaded = Header::read_from_file(path)?;
 assert_eq!(reloaded, header);
 # Ok::<(), xisf_header::Error>(())
@@ -101,25 +104,28 @@ assert_eq!(reloaded, header);
 ## Edit a file's header in place
 
 [`Header::update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
-reads a file's header, applies an edit closure, and writes the container back.
+reads a file's header, applies an edit closure, and splices the result back
+into the file — byte-exact and data-preserving. Everything outside the
+edited `<FITSKeyword>`/`<Property>` elements (unmodeled XML, whitespace, the
+attached pixel data) survives untouched, and a no-op edit reproduces the
+file byte-for-byte. If the edit changes the header's length, the `<Image
+location>` offset is recomputed and the original data moves (unchanged) to
+the new offset — `SIZE` never changes.
 
 ```rust,no_run
-# use xisf_header::{Header, StructuralHints};
-Header::update_file("master-dark.xisf", &StructuralHints::default(), |h| {
-    h.set("OBJECT", "NGC 7000").unwrap();
+# use xisf_header::Header;
+Header::update_file("master-dark.xisf", |h| {
+    h.set("OBJECT", "NGC 7000")?;
+    Ok(())
 })?;
 # Ok::<(), xisf_header::Error>(())
 ```
 
-> **Warning:** `to_bytes`/`write_to_file`/`update_file` emit a self-contained,
-> header-only container: the data block is zero-filled from
-> [`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html),
-> and XML elements the crate does not model (`Metadata`, `Resolution`,
-> thumbnails, …) are not re-emitted. Because `write_to_file` and `update_file`
-> replace the file at their path wholesale, do not run them against a file
-> whose pixel data must be kept. To edit a real image's header, emit
-> [`Header::to_header_bytes`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
-> and append the file's original data yourself.
+`update_file` targets the common single-image layout: exactly one `<Image
+location="attachment:…">` element. A file with zero or multiple attachments
+(e.g. a `Thumbnail` alongside the `Image`) is rejected with
+[`Error::Unsupported`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Unsupported)
+rather than risking data loss.
 
 ## Handling errors
 

@@ -88,9 +88,6 @@ proptest! {
         let h = build_header(&keywords, &properties);
         let hints = StructuralHints::default();
 
-        let full = Header::parse(&h.to_bytes(&hints)).unwrap();
-        prop_assert_eq!(&full, &h);
-
         let header_only = Header::parse(&h.to_header_bytes(&hints)).unwrap();
         prop_assert_eq!(&header_only, &h);
     }
