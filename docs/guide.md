@@ -2,7 +2,7 @@
 
 A task-oriented walkthrough for building, editing, and round-tripping an XISF
 header. The snippets below mirror
-[`examples/quickstart.rs`](../examples/quickstart.rs) (`cargo run --example
+[`examples/quickstart.rs`](https://github.com/nightwatch-astro/xisf-header/blob/main/examples/quickstart.rs) (`cargo run --example
 quickstart`), which runs the same steps end to end against a temporary file.
 
 The walkthrough builds one header for a master dark calibration frame and

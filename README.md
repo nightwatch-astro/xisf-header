@@ -287,8 +287,8 @@ assert_eq!(reloaded, header);
 
 ## Documentation
 
-- **[Quickstart guide](docs/guide.md)** — a task-oriented walkthrough backed
-  by [`examples/quickstart.rs`](examples/quickstart.rs).
+- **[Quickstart guide](https://docs.rs/xisf-header/latest/xisf_header/guide/index.html)** — a task-oriented walkthrough backed
+  by [`examples/quickstart.rs`](https://github.com/nightwatch-astro/xisf-header/blob/main/examples/quickstart.rs).
 - **[docs.rs/xisf-header](https://docs.rs/xisf-header)** — full API
   documentation generated from the source doc comments, published for every
   release (all features enabled). Build it locally with `cargo doc --no-deps
