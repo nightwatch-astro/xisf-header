@@ -19,7 +19,7 @@ strings are quoted, numbers are bare literals; wrap a float in
 [`Fixed`](https://docs.rs/xisf-header/latest/xisf_header/struct.Fixed.html)
 for controlled fixed-point formatting.
 
-```rust,no_run
+```rust
 use xisf_header::{Fixed, Header, StructuralHints};
 
 let mut header = Header::new();
@@ -38,7 +38,7 @@ keywords that repeat are built with
 and read back with `get_all`/`count`, or an `("HISTORY", n)` key for one
 occurrence.
 
-```rust,no_run
+```rust
 # use xisf_header::Header;
 # let mut header = Header::new();
 header.append("HISTORY", "reduced with siril")?;
@@ -55,7 +55,7 @@ creates a `String`-typed property;
 [`Header::set_property_with_type`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property_with_type)
 records an explicit XISF type (e.g. `Float32`), which round-trips verbatim.
 
-```rust,no_run
+```rust
 # use xisf_header::Header;
 # let mut header = Header::new();
 header.set_property("Observation:Object:Name", "NGC 7000")?;
@@ -73,7 +73,7 @@ matching those hints;
 [`Header::parse`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.parse)
 reads one back. Append your own pixel data to complete the container.
 
-```rust,no_run
+```rust
 # use xisf_header::{Header, StructuralHints};
 # let header = Header::new();
 let hints = StructuralHints::default(); // 1x1x1 8-bit grayscale = 1 byte
@@ -88,16 +88,17 @@ assert_eq!(Header::parse(&container)?, header);
 Write the assembled container and read it back with
 [`Header::read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file).
 
-```rust,no_run
+```rust
 # use xisf_header::{Header, StructuralHints};
 # let header = Header::new();
 # let hints = StructuralHints::default();
-let path = "master-dark.xisf";
+let path = std::env::temp_dir().join("master-dark.xisf");
 let mut container = header.to_header_bytes(&hints);
 container.push(0);
-std::fs::write(path, &container)?;
-let reloaded = Header::read_from_file(path)?;
+std::fs::write(&path, &container)?;
+let reloaded = Header::read_from_file(&path)?;
 assert_eq!(reloaded, header);
+# std::fs::remove_file(&path).ok();
 # Ok::<(), xisf_header::Error>(())
 ```
 
@@ -112,12 +113,18 @@ file byte-for-byte. If the edit changes the header's length, the `<Image
 location>` offset is recomputed and the original data moves (unchanged) to
 the new offset — `SIZE` never changes.
 
-```rust,no_run
-# use xisf_header::Header;
-Header::update_file("master-dark.xisf", |h| {
+```rust
+# use xisf_header::{Header, StructuralHints};
+# let path = std::env::temp_dir().join("master-dark-update.xisf");
+# let header = Header::new();
+# let mut container = header.to_header_bytes(&StructuralHints::default());
+# container.push(0);
+# std::fs::write(&path, &container)?;
+Header::update_file(&path, |h| {
     h.set("OBJECT", "NGC 7000")?;
     Ok(())
 })?;
+# std::fs::remove_file(&path).ok();
 # Ok::<(), xisf_header::Error>(())
 ```
 
@@ -135,7 +142,7 @@ Keyword accessors return
 signals a bare name that matches more than one keyword — select an occurrence
 with an `(name, n)` key instead.
 
-```rust,no_run
+```rust
 # use xisf_header::{Error, Header};
 # let mut header = Header::new();
 # header.append("HISTORY", "reduced with siril").unwrap();

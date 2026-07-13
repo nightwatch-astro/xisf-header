@@ -68,7 +68,8 @@ pub enum Error {
         count: usize,
     },
 
-    /// An `(name, n)` access referenced an occurrence index that does not exist.
+    /// A [`Key::Nth`](crate::Key::Nth) `(name, n)` access referenced an
+    /// occurrence index that does not exist.
     #[error("keyword `{name}` has no occurrence {index} ({count} present)")]
     IndexOutOfRange {
         /// The keyword name.
