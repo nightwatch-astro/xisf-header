@@ -1,6 +1,6 @@
 [package]
 name = "xisf-header"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 rust-version = "1.82.0"
 description = "Read and write XISF image-file headers: extract FITS keywords and CRUD the XISF header container. Header-only (never touches pixel data)."
