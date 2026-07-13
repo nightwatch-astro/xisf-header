@@ -8,9 +8,10 @@ use crate::keyword::FitsKeyword;
 use crate::property::Property;
 use crate::value::{FromField, IntoValue};
 
-/// Geometry hints used when serializing a standalone container: they populate
-/// the `<Image>` element when the header does not already carry that structure.
-/// Defaults to a minimal 1×1 8-bit grayscale image.
+/// Geometry hints used when serializing a standalone container. A [`Header`]
+/// stores only keywords and properties — never image structure — so these
+/// hints always supply the `<Image>` element's `geometry`, `sampleFormat`, and
+/// `colorSpace`. Defaults to a minimal 1×1 8-bit grayscale image.
 ///
 /// ```
 /// use xisf_header::StructuralHints;
@@ -49,7 +50,8 @@ impl Default for StructuralHints {
 ///
 /// Keyword access is **strict**: a bare name must be unique, or the accessor
 /// returns [`Error::Ambiguous`]. Repeated keywords are reached with an
-/// `(name, n)` key or the `get_all`/`count` helpers. Keyword order is preserved.
+/// `(name, n)` key or the `get_all`/`count` helpers. Keyword order is
+/// preserved; property iteration is ordered by id, not document order.
 ///
 /// ```
 /// use xisf_header::Header;
@@ -361,7 +363,8 @@ impl Header {
     ///
     /// # Errors
     ///
-    /// See [`Header::set`].
+    /// See [`Header::get`]: [`Error::Ambiguous`] on a duplicated bare name,
+    /// [`Error::IndexOutOfRange`] for an out-of-range `(name, n)` index.
     ///
     /// ```
     /// use xisf_header::Header;
@@ -419,7 +422,8 @@ impl Header {
     ///
     /// # Errors
     ///
-    /// See [`Header::set`].
+    /// See [`Header::get`]: [`Error::Ambiguous`] on a duplicated bare name,
+    /// [`Error::IndexOutOfRange`] for an out-of-range `(name, n)` index.
     ///
     /// ```
     /// use xisf_header::Header;
@@ -541,7 +545,8 @@ impl Header {
 
     // ----- property CRUD -------------------------------------------------
 
-    /// All `<Property>` entries, keyed by `id`.
+    /// All `<Property>` entries, keyed by `id`. Iteration is ordered by id,
+    /// not by document order.
     ///
     /// ```
     /// use xisf_header::Header;

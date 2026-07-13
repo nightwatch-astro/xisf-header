@@ -40,8 +40,10 @@ the UTF-8 XML header, and never reads image/pixel data.
   so the Rust type chooses string vs. bare-literal formatting.
 - **[`<Property>`](https://docs.rs/xisf-header/latest/xisf_header/struct.Property.html)
   round-trip.** XISF properties keep their `type`, `comment`, and `format`
-  attributes verbatim; `String` properties stored as child text are read.
-  Values are stored raw (XISF properties are not FITS-quoted).
+  attributes verbatim. A `String` property written as child text
+  (`<Property id=…>text</Property>`) is read the same as the attribute form,
+  and writes normalize it to a `value=` attribute. Values are stored raw
+  (XISF properties are not FITS-quoted).
 - **Two serialization outputs.**
   [`to_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_bytes)
   for a self-contained container and
@@ -241,8 +243,10 @@ Header::update_file("out.xisf", &StructuralHints::default(), |h| {
 > **Warning:** `to_bytes`/`write_to_file`/`update_file` emit a self-contained,
 > header-only container: the data block is **zero-filled** from
 > `StructuralHints`, and XML elements the crate does not model (`Metadata`,
-> `Resolution`, thumbnails, …) are not re-emitted. Do not point them at files
-> whose pixel data must be kept. To edit a real image's header, emit
+> `Resolution`, thumbnails, …) are not re-emitted. Because `write_to_file` and
+> `update_file` replace the file at their path wholesale, do not run them
+> against a file whose pixel data must be kept. To edit a real image's header,
+> emit
 > [`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
 > and append the file's original data yourself.
 

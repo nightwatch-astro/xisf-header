@@ -115,8 +115,9 @@ Header::update_file("master-dark.xisf", &StructuralHints::default(), |h| {
 > header-only container: the data block is zero-filled from
 > [`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html),
 > and XML elements the crate does not model (`Metadata`, `Resolution`,
-> thumbnails, …) are not re-emitted. Do not point them at files whose pixel
-> data must be kept. To edit a real image's header, emit
+> thumbnails, …) are not re-emitted. Because `write_to_file` and `update_file`
+> replace the file at their path wholesale, do not run them against a file
+> whose pixel data must be kept. To edit a real image's header, emit
 > [`Header::to_header_bytes`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
 > and append the file's original data yourself.
 
