@@ -35,7 +35,21 @@ pub(crate) fn update_file<P: AsRef<Path>>(
     let path = path.as_ref();
     let original = std::fs::read(path)?;
     let (xml_start, xml_end) = reader::split_preamble(&original)?;
-    let xml = std::str::from_utf8(&original[xml_start..xml_end])?;
+    let xml_full = std::str::from_utf8(&original[xml_start..xml_end])?;
+
+    // quick_xml strips a leading UTF-8 BOM and reports byte positions relative
+    // to the post-BOM content, so all recorded spans must index the same
+    // post-BOM slice. Strip it here for parsing + splicing, and re-prepend the
+    // exact BOM bytes verbatim when writing back (so the on-disk header — and
+    // thus the preamble length field and attachment offset — still counts it).
+    let bom_len = if xml_full.starts_with('\u{FEFF}') {
+        '\u{FEFF}'.len_utf8()
+    } else {
+        0
+    };
+    let bom = &original[xml_start..xml_start + bom_len];
+    let xml = &xml_full[bom_len..];
+
     let (before, index) = reader::parse_xml_with_index(xml)?;
     let reader::XmlIndex {
         keyword_spans,
@@ -57,12 +71,12 @@ pub(crate) fn update_file<P: AsRef<Path>>(
         .sum();
 
     if content_delta != 0 {
-        regions.push(relocate_attachment(xml_bytes.len(), content_delta, &image)?);
+        regions.push(relocate_attachment(content_delta, &image)?);
         regions.sort_by_key(|r| r.start);
     }
 
     let new_xml = splice(xml_bytes, &regions);
-    write_container(path, &original, xml_start, xml_end, &image, &new_xml)
+    write_container(path, &original, xml_start, xml_end, bom, &image, &new_xml)
 }
 
 /// Build every region except the (possibly unnecessary) attachment-offset
@@ -174,24 +188,27 @@ fn match_keywords<'a>(
     (kept, after[j..].iter().collect())
 }
 
-/// Recompute the `attachment:OFFSET:SIZE` location text so it reflects the
-/// new total header length, converging on the offset's own digit width
-/// (which itself contributes to that length) by fixed-point iteration —
-/// mirroring the two-pass render in [`crate::writer`].
-fn relocate_attachment(xml_len: usize, content_delta: isize, image: &ImageInfo) -> Result<Region> {
+/// Recompute the `attachment:OFFSET:SIZE` location text so the offset tracks
+/// the header's length change. The new data start is the original offset
+/// shifted by the total header delta — `content_delta` plus the location
+/// text's own length change — which keeps the header↔data gap and any BOM
+/// intact without needing to know either. The offset's digit width feeds
+/// back into that delta, so converge by fixed-point iteration (like the
+/// two-pass render in [`crate::writer`]).
+fn relocate_attachment(content_delta: isize, image: &ImageInfo) -> Result<Region> {
     let (loc_start, loc_end) = image.location_span;
     let old_loc_len = loc_end - loc_start;
 
-    let mut offset = 16 + xml_len; // initial guess: ignore the offset-text width delta
+    let mut offset = image.offset.saturating_add_signed(content_delta); // guess: ignore loc_delta
     for _ in 0..16 {
         let text = format!("attachment:{offset}:{}", image.size);
         let loc_delta = text.len() as isize - old_loc_len as isize;
-        let new_xml_len: usize = (xml_len as isize + content_delta + loc_delta)
-            .try_into()
-            .map_err(|_| {
-                Error::Unsupported("edit shrank the header below zero bytes".to_owned())
+        let needed_offset: usize = image
+            .offset
+            .checked_add_signed(content_delta + loc_delta)
+            .ok_or_else(|| {
+                Error::Unsupported("edit shifted the attachment offset below zero".to_owned())
             })?;
-        let needed_offset: usize = 16 + new_xml_len;
         if needed_offset == offset {
             return Ok(Region {
                 start: loc_start,
@@ -222,13 +239,15 @@ fn splice(xml: &[u8], regions: &[Region]) -> Vec<u8> {
 
 /// Assemble the final container and write it atomically: preamble (with the
 /// new XML length; signature and reserved bytes preserved verbatim) + the
-/// spliced XML + the original gap/data/trailing bytes, moved verbatim to sit
-/// right after the (possibly relocated) header.
+/// `bom` bytes (empty when the source had none) + the spliced XML + the
+/// original gap/data/trailing bytes, moved verbatim to sit right after the
+/// (possibly relocated) header.
 fn write_container(
     path: &Path,
     original: &[u8],
     xml_start: usize,
     xml_end: usize,
+    bom: &[u8],
     image: &ImageInfo,
     new_xml: &[u8],
 ) -> Result<()> {
@@ -249,25 +268,52 @@ fn write_container(
     let data = &original[data_start..data_end];
     let trailing = &original[data_end..];
 
-    let mut out = Vec::with_capacity(16 + new_xml.len() + gap.len() + data.len() + trailing.len());
+    let header_len = bom.len() + new_xml.len();
+    let mut out = Vec::with_capacity(16 + header_len + gap.len() + data.len() + trailing.len());
     out.extend_from_slice(&original[0..8]); // signature, unchanged
-    out.extend_from_slice(
-        &u32::try_from(new_xml.len())
-            .unwrap_or(u32::MAX)
-            .to_le_bytes(),
-    );
+    out.extend_from_slice(&u32::try_from(header_len).unwrap_or(u32::MAX).to_le_bytes());
     out.extend_from_slice(&original[12..xml_start]); // reserved bytes, preserved verbatim
+    out.extend_from_slice(bom);
     out.extend_from_slice(new_xml);
     out.extend_from_slice(gap);
     out.extend_from_slice(data);
     out.extend_from_slice(trailing);
 
-    let tmp_path = tmp_path_for(path);
-    if let Err(e) = std::fs::write(&tmp_path, &out) {
+    atomic_write(path, &out)
+}
+
+/// Write `bytes` to `path` atomically via a sibling temp file + rename.
+/// Follows symlinks (resolves `path` to its canonical target and replaces
+/// that, so a symlink stays a symlink), preserves the target's unix
+/// permission mode, and never leaves the temp file behind on failure.
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    // canonicalize resolves symlinks so the temp file lands in the real
+    // target's directory (same filesystem, so rename is atomic) and the
+    // rename replaces the target rather than the symlink itself.
+    let target = std::fs::canonicalize(path)?;
+    let tmp_path = tmp_path_for(&target);
+
+    if let Err(e) = std::fs::write(&tmp_path, bytes) {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(e.into());
     }
-    std::fs::rename(&tmp_path, path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&target) {
+            // Best-effort: keep the original mode (e.g. don't widen 0600).
+            let _ = std::fs::set_permissions(
+                &tmp_path,
+                std::fs::Permissions::from_mode(meta.permissions().mode()),
+            );
+        }
+    }
+
+    if let Err(e) = std::fs::rename(&tmp_path, &target) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e.into());
+    }
     Ok(())
 }
 

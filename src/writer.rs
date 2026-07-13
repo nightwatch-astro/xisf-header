@@ -72,6 +72,10 @@ impl Header {
     /// [`Error::Unsupported`](crate::Error::Unsupported) rather than risking
     /// data loss.
     ///
+    /// The write is atomic — a sibling temp file is renamed over the target
+    /// — and follows symlinks (a symlinked `path` stays a symlink to the same
+    /// target) and preserves the target's unix permission mode.
+    ///
     /// # Errors
     ///
     /// Propagates any error from reading or re-parsing the file, from

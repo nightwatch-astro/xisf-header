@@ -233,3 +233,208 @@ fn normal_header_regime() {
 fn oversized_header_regime() {
     check_regime("oversized", 300, 120);
 }
+
+/// Build a monolithic XISF file with an optional leading UTF-8 BOM inside the
+/// XML header, `location` deliberately NOT the last `<Image>` attribute (so a
+/// misplaced splice would land mid-attribute), and a non-empty gap between
+/// the header and the attached data (so offset accounting can't ignore it).
+///
+/// The `location` offset counts the BOM and the gap, matching a real writer;
+/// a fixed-width zero-padded offset keeps the XML length independent of the
+/// offset's digit count so it can be substituted after the fact.
+fn mk_bom_gapped(with_bom: bool, keywords: &str, data: &[u8], gap: &[u8]) -> Vec<u8> {
+    const OFFSET_WIDTH: usize = 10;
+    let bom = if with_bom { "\u{FEFF}" } else { "" };
+    let template = format!(
+        "{bom}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <xisf version=\"1.0\" xmlns=\"http://www.pixinsight.com/xisf\">\n\
+         <Metadata><Description>bom fixture</Description></Metadata>\n\
+         <Image geometry=\"1:1:{samples}\" sampleFormat=\"UInt8\" \
+         location=\"attachment:{{offset}}:{size}\" colorSpace=\"Gray\">\n\
+         <Resolution horizontal=\"72\" vertical=\"72\" unit=\"inch\"/>\n\
+         {keywords}\n\
+         </Image>\n\
+         </xisf>\n",
+        samples = data.len().max(1),
+        size = data.len(),
+    );
+    let placeholder = "0".repeat(OFFSET_WIDTH);
+    let xml_len = template.replace("{offset}", &placeholder).len();
+    let offset = 16 + xml_len + gap.len();
+    let offset_str = format!("{offset:0width$}", width = OFFSET_WIDTH);
+    let xml = template.replace("{offset}", &offset_str);
+    assert_eq!(xml.len(), xml_len, "offset width must not change length");
+
+    let mut out = Vec::with_capacity(16 + xml.len() + gap.len() + data.len());
+    out.extend_from_slice(b"XISF0100");
+    out.extend_from_slice(&(u32::try_from(xml.len()).unwrap()).to_le_bytes());
+    out.extend_from_slice(&[0u8; 4]);
+    out.extend_from_slice(xml.as_bytes());
+    out.extend_from_slice(gap);
+    out.extend_from_slice(data);
+    out
+}
+
+/// Regression: a leading UTF-8 BOM must not corrupt spliced edits. quick_xml
+/// strips the BOM and reports byte positions relative to the post-BOM
+/// content, so without reconciliation every element span would be off by the
+/// BOM's 3 bytes and an edit would splice mid-attribute while returning Ok.
+#[test]
+fn bom_and_gap_no_op_and_edit() {
+    let data = ramp_data(64);
+    let gap = b"\x00\x00\x00\x00\x00"; // 5-byte alignment gap before the data
+    let keywords = r#"<FITSKeyword name="GAIN" value="100" comment="sensor gain"/>
+<FITSKeyword name="OBJECT" value="'M31'" comment="target"/>"#;
+    let container = mk_bom_gapped(true, keywords, &data, gap);
+
+    // The BOM really is on disk, right after the 16-byte preamble.
+    assert_eq!(
+        &container[16..19],
+        &[0xEF, 0xBB, 0xBF],
+        "fixture must carry a BOM"
+    );
+
+    let path = std::env::temp_dir().join(format!("xisf-header-bom-{}.xisf", std::process::id()));
+
+    // (a) No-op edit reproduces the BOM'd, gapped file byte-for-byte.
+    std::fs::write(&path, &container).unwrap();
+    Header::update_file(&path, |_h| Ok(())).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        container,
+        "no-op edit on a BOM'd file must be byte-exact"
+    );
+
+    // (b) A real edit (which grows the XML, forcing an offset recompute)
+    //     produces valid XML: it re-parses with the new value, unmodeled
+    //     elements survive, and the attached data is intact at the new offset.
+    std::fs::write(&path, &container).unwrap();
+    Header::update_file(&path, |h| {
+        h.set("GAIN", 20000_i64)?; // wider value: grows the header
+        Ok(())
+    })
+    .unwrap();
+    let edited = std::fs::read(&path).unwrap();
+
+    // Still valid, correctly-positioned XML — not a mid-attribute splice.
+    let header = Header::read_from_file(&path).unwrap();
+    assert_eq!(header.get_i64("GAIN").unwrap(), Some(20000));
+    assert_eq!(header.get_str("OBJECT").unwrap(), Some("M31"));
+    assert!(
+        contains(
+            &edited,
+            b"<Metadata><Description>bom fixture</Description></Metadata>"
+        ),
+        "unmodeled Metadata must survive a BOM'd edit verbatim"
+    );
+    assert!(
+        contains(&edited, UNMODELED_RESOLUTION.as_bytes()),
+        "unmodeled Resolution must survive a BOM'd edit verbatim"
+    );
+    // The BOM is preserved and the (relocated) attachment still points at the
+    // exact original data bytes — the gap was not swallowed.
+    assert_eq!(
+        &edited[16..19],
+        &[0xEF, 0xBB, 0xBF],
+        "BOM must be preserved"
+    );
+    assert_eq!(
+        attachment_data(&edited),
+        data.as_slice(),
+        "data must survive a BOM'd, gapped, length-changing edit byte-identical"
+    );
+}
+
+/// The atomic write follows a symlink (replacing its target, leaving the
+/// link a link) and preserves the target's unix permission mode.
+#[cfg(unix)]
+#[test]
+fn update_file_follows_symlink_and_preserves_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("xisf-header-symlink-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("real.xisf");
+    let link = dir.join("link.xisf");
+
+    let data = ramp_data(32);
+    std::fs::write(
+        &target,
+        mk_xisf(
+            r#"<FITSKeyword name="GAIN" value="1" comment=""/>"#,
+            "",
+            "",
+            &data,
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    Header::update_file(&link, |h| {
+        h.set("GAIN", 2_i64)?;
+        Ok(())
+    })
+    .unwrap();
+
+    // The link is still a symlink to the same target…
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    // …the edit landed on the target…
+    assert_eq!(
+        Header::read_from_file(&target)
+            .unwrap()
+            .get_i64("GAIN")
+            .unwrap(),
+        Some(2)
+    );
+    // …and the restrictive 0600 mode was not widened.
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Regression: a non-empty header↔data gap must be preserved across a
+/// length-changing edit — the recomputed offset shifts by the header delta
+/// only, so the gap bytes and the data stay put relative to each other.
+#[test]
+fn gap_preserved_across_length_change() {
+    let data = ramp_data(128);
+    let gap = b"\xAA\xBB\xCC\xDD"; // distinctive, non-zero gap
+    let keywords = r#"<FITSKeyword name="GAIN" value="1" comment=""/>"#;
+    let container = mk_bom_gapped(false, keywords, &data, gap);
+
+    let (old_offset, _) = attachment_location(&container);
+    let path = std::env::temp_dir().join(format!("xisf-header-gap-{}.xisf", std::process::id()));
+    std::fs::write(&path, &container).unwrap();
+
+    Header::update_file(&path, |h| {
+        h.set("GAIN", 123456789_i64)?; // grow the header
+        Ok(())
+    })
+    .unwrap();
+    let edited = std::fs::read(&path).unwrap();
+    let (new_offset, _) = attachment_location(&edited);
+
+    assert!(
+        new_offset > old_offset,
+        "offset must move later as the header grows"
+    );
+    // The gap bytes still sit immediately before the (relocated) data.
+    assert_eq!(
+        &edited[new_offset - gap.len()..new_offset],
+        gap,
+        "the distinctive gap bytes must survive immediately before the data"
+    );
+    assert_eq!(
+        attachment_data(&edited),
+        data.as_slice(),
+        "data must be intact at the recomputed, gap-preserving offset"
+    );
+    std::fs::remove_file(&path).ok();
+}
