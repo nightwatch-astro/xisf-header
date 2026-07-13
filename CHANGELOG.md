@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.0...v0.3.1) (2026-07-13)
+
+
+### Documentation
+
+* render guide.md on docs.rs and close remaining example gaps ([#8](https://github.com/nightwatch-astro/xisf-header/issues/8)) ([460e049](https://github.com/nightwatch-astro/xisf-header/commit/460e04934498c4b89483e0d197dc59684c24bc53))
+
 ## [0.3.0](https://github.com/nightwatch-astro/xisf-header/compare/v0.2.1...v0.3.0) (2026-07-13)
 
 
