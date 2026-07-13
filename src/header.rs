@@ -53,6 +53,12 @@ impl Default for StructuralHints {
 /// `(name, n)` key or the `get_all`/`count` helpers. Keyword order is
 /// preserved; property iteration is ordered by id, not document order.
 ///
+/// This struct is an **in-memory model only**: mutating it (`set`, `append`,
+/// `remove`, `set_property`, …) changes nothing on disk. Persist the result
+/// with [`write_to_file`](Self::write_to_file) to create a new file, or
+/// [`update_file`](Self::update_file) to splice the change into an existing
+/// one.
+///
 /// ```
 /// use xisf_header::Header;
 ///
@@ -293,6 +299,13 @@ impl Header {
     /// Set a keyword's value: update in place when the name is unique, append
     /// when absent. The existing comment is preserved.
     ///
+    /// This changes the in-memory header only — nothing is written to disk
+    /// until you call [`write_to_file`](Self::write_to_file) (new file) or
+    /// [`update_file`](Self::update_file) (existing file).
+    ///
+    /// For XISF-native structured metadata, see
+    /// [`set_property`](Self::set_property).
+    ///
     /// # Errors
     ///
     /// [`Error::Ambiguous`] when a bare name is duplicated (use `(name, n)` or
@@ -334,6 +347,10 @@ impl Header {
 
     /// Append a keyword unconditionally (allowing duplicate names). This is how
     /// commentary keywords such as `HISTORY` are built up.
+    ///
+    /// This changes the in-memory header only — nothing is written to disk
+    /// until you call [`write_to_file`](Self::write_to_file) (new file) or
+    /// [`update_file`](Self::update_file) (existing file).
     ///
     /// # Errors
     ///
@@ -419,6 +436,10 @@ impl Header {
     }
 
     /// Remove the addressed keyword. Returns `true` if one was removed.
+    ///
+    /// This changes the in-memory header only — nothing is written to disk
+    /// until you call [`write_to_file`](Self::write_to_file) (new file) or
+    /// [`update_file`](Self::update_file) (existing file).
     ///
     /// # Errors
     ///
@@ -598,6 +619,8 @@ impl Header {
     /// Insert or update a property's value. An existing property keeps its
     /// `type`, `comment`, and `format`; a new one is created with type
     /// `String`.
+    ///
+    /// For embedded FITS header keywords, see [`set`](Self::set).
     ///
     /// # Errors
     ///

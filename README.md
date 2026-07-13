@@ -44,12 +44,16 @@ the UTF-8 XML header, and never reads image/pixel data.
   (`<Property id=…>text</Property>`) is read the same as the attribute form,
   and writes normalize it to a `value=` attribute. Values are stored raw
   (XISF properties are not FITS-quoted).
-- **Two write paths.** Assemble a new file with
+- **Two write paths.** Edit an existing file in place with
+  [`update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
+  — the common case — which splices only the changed keywords/properties into
+  the file's raw bytes (byte-exact and data-preserving). To create a **new**
+  file from pixel data you already have, use
+  [`write_to_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.write_to_file)
+  (errors rather than overwriting an existing path); or emit just the header
+  block with
   [`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
-  plus your own data, or edit an existing file in place with
-  [`update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file),
-  which splices only the changed keywords/properties into the file's raw
-  bytes — byte-exact and data-preserving.
+  for full control over assembly.
 - **Enumerate and bulk-edit.** Read keywords in document order with
   [`keywords`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.keywords)/[`iter`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.iter);
   apply atomic batches with
@@ -167,6 +171,19 @@ assert_eq!(header.count("HISTORY"), 1);
 # Ok::<(), xisf_header::Error>(())
 ```
 
+### FITS keywords vs XISF properties
+
+Two different metadata namespaces:
+
+- **FITS keywords** (`set`/`get`/`append`) — embedded `<FITSKeyword name=…
+  value=… comment=…/>` elements carried over for FITS compatibility. Names
+  are ≤ 8 uppercase ASCII characters and can repeat (e.g. `HISTORY`). Use
+  these for metadata other FITS-aware tools need to read.
+- **XISF properties** (`set_property`/`property`/`set_property_with_type`) —
+  native XISF `<Property>` elements. Ids are colon-delimited and hierarchical
+  (e.g. `Observation:Object:Name`), carry an explicit XISF type, and are
+  unique per id. Use these for XISF-native structured metadata.
+
 ### XISF properties
 
 [`set_property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property)
@@ -211,33 +228,10 @@ assert_eq!(header.get_str("EXPTIME")?, Some("300.00"));
 # Ok::<(), xisf_header::Error>(())
 ```
 
-### Assemble a new file
-
-[`to_header_bytes(&hints)`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
-emits the preamble plus XML header, using
-[`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html)
-to fill in the `<Image>` geometry and to size the `location` attribute's
-attachment offset; append your own pixel data (sized to match `hints`) to
-complete the container.
-
-```rust,no_run
-use xisf_header::{Header, StructuralHints};
-
-let mut header = Header::new();
-header.set("IMAGETYP", "Master Dark")?;
-
-let hints = StructuralHints::default(); // 1x1x1 8-bit grayscale = 1 byte
-let mut container = header.to_header_bytes(&hints);
-container.push(0); // the caller's own pixel data
-std::fs::write("out.xisf", &container)?;
-
-let reloaded = Header::read_from_file("out.xisf")?;
-assert_eq!(reloaded, header);
-# std::fs::remove_file("out.xisf").ok();
-# Ok::<(), xisf_header::Error>(())
-```
-
 ### Edit a file's header in place
+
+The common path: change a keyword or property on an existing XISF file
+without touching its pixel data or unmodeled XML.
 
 [`Header::update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
 reads a file's header, applies an edit closure, and splices the result back
@@ -263,6 +257,33 @@ location="attachment:…">` element. A file with zero or multiple attachments
 (e.g. a `Thumbnail` alongside the `Image`) is rejected with
 [`Error::Unsupported`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Unsupported)
 rather than risking data loss.
+
+### Create a new file
+
+Use this only when you're assembling a fresh XISF file from pixel data you
+already have — not for editing one that exists (that's `update_file` above).
+[`Header::write_to_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.write_to_file)
+writes the preamble, the XML header (`<Image>` filled in from
+[`StructuralHints`](https://docs.rs/xisf-header/latest/xisf_header/struct.StructuralHints.html)),
+and your `data` bytes to a **new** file; it errors if `path` already exists
+rather than overwriting it, and never fabricates pixel data — `data` is
+always the caller's own.
+
+```rust,no_run
+use xisf_header::{Header, StructuralHints};
+
+let mut header = Header::new();
+header.set("IMAGETYP", "Master Dark")?;
+
+let hints = StructuralHints::default(); // 1x1x1 8-bit grayscale = 1 byte
+let data = [0u8]; // the caller's own pixel data
+header.write_to_file("out.xisf", &hints, &data)?;
+
+let reloaded = Header::read_from_file("out.xisf")?;
+assert_eq!(reloaded, header);
+# std::fs::remove_file("out.xisf").ok();
+# Ok::<(), xisf_header::Error>(())
+```
 
 ## Documentation
 
