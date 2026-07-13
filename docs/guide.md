@@ -55,8 +55,12 @@ assert_eq!(header.count("HISTORY"), 1);
 
 ## Attach XISF properties
 
-XISF `<Property>` elements are a separate namespace from FITS keywords, keyed
-by a colon-delimited id.
+XISF `<Property>` elements are a separate namespace from FITS keywords: FITS
+keywords (`set`/`get`/`append`) use ≤ 8-character uppercase names and can
+repeat, while properties are keyed by a colon-delimited hierarchical id (e.g.
+`Observation:Object:Name`), carry an explicit XISF type, and are unique per
+id. Reach for FITS keywords when other FITS-aware tools need to read the
+metadata; reach for properties for XISF-native structured metadata.
 [`Header::set_property`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property)
 creates a `String`-typed property;
 [`Header::set_property_with_type`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.set_property_with_type)
@@ -70,7 +74,7 @@ header.set_property_with_type("Instrument:Telescope:FocalLength", "0.53", "Float
 # Ok::<(), xisf_header::Error>(())
 ```
 
-## Serialize and assemble a new file
+## Serialize a header block
 
 [`Header::to_header_bytes`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.to_header_bytes)
 emits the preamble plus XML header from
@@ -78,7 +82,8 @@ emits the preamble plus XML header from
 with the `<Image location>` attachment offset already sized to fit data
 matching those hints;
 [`Header::parse`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.parse)
-reads one back. Append your own pixel data to complete the container.
+reads one back. This is an in-memory building block — nothing is written to
+disk until you call `write_to_file` or `update_file` (below).
 
 ```rust
 # use xisf_header::{Header, StructuralHints};
@@ -90,26 +95,10 @@ assert_eq!(Header::parse(&container)?, header);
 # Ok::<(), xisf_header::Error>(())
 ```
 
-## Round-trip through a file
-
-Write the assembled container and read it back with
-[`Header::read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file).
-
-```rust
-# use xisf_header::{Header, StructuralHints};
-# let header = Header::new();
-# let hints = StructuralHints::default();
-let path = std::env::temp_dir().join("master-dark.xisf");
-let mut container = header.to_header_bytes(&hints);
-container.push(0);
-std::fs::write(&path, &container)?;
-let reloaded = Header::read_from_file(&path)?;
-assert_eq!(reloaded, header);
-# std::fs::remove_file(&path).ok();
-# Ok::<(), xisf_header::Error>(())
-```
-
 ## Edit a file's header in place
+
+The common case: change a keyword or property on an existing XISF file
+without touching its pixel data or unmodeled XML.
 
 [`Header::update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
 reads a file's header, applies an edit closure, and splices the result back
@@ -140,6 +129,31 @@ location="attachment:…">` element. A file with zero or multiple attachments
 (e.g. a `Thumbnail` alongside the `Image`) is rejected with
 [`Error::Unsupported`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Unsupported)
 rather than risking data loss.
+
+## Create a new file
+
+Reach for this only when there's no existing file to edit — you're
+assembling a fresh XISF file from pixel data you already have.
+[`Header::write_to_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.write_to_file)
+writes the preamble, the XML header (`<Image>` filled in from `hints`), and
+your `data` bytes to a **new** file in one call — the `location` `SIZE`
+attribute is set from `data.len()`. It errors rather than overwriting an
+existing path, and never fabricates pixel data: `data` is always the
+caller's own (`&[]` for a header-only file).
+
+```rust
+# use xisf_header::{Header, StructuralHints};
+# let header = Header::new();
+# let hints = StructuralHints::default();
+let path = std::env::temp_dir().join("master-dark.xisf");
+let data = [0u8]; // the caller's own pixel data, matching `hints`
+header.write_to_file(&path, &hints, &data)?;
+
+let reloaded = Header::read_from_file(&path)?;
+assert_eq!(reloaded, header);
+# std::fs::remove_file(&path).ok();
+# Ok::<(), xisf_header::Error>(())
+```
 
 ## Handling errors
 

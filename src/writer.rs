@@ -1,5 +1,7 @@
 //! Serialization: emit an XISF container (or just its header) from a [`Header`].
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
@@ -35,8 +37,67 @@ impl Header {
     /// ```
     #[must_use]
     pub fn to_header_bytes(&self, hints: &StructuralHints) -> Vec<u8> {
-        let size = data_size(hints);
+        self.render_container_header(hints, data_size(hints))
+    }
 
+    /// Write a complete XISF container to a **new** file: the preamble + XML
+    /// header (with the `<Image>` element from `hints`, and a `location`
+    /// attachment `SIZE` equal to `data.len()`) followed by `data` verbatim.
+    ///
+    /// `data` is the caller's own pixel bytes — this crate never fabricates
+    /// image data. Pass `&[]` for a header-only container (`SIZE` 0).
+    ///
+    /// This creates a **new file only**: it fails with
+    /// [`Error::Io`](crate::Error::Io) (`ErrorKind::AlreadyExists`) if `path`
+    /// already exists, rather than overwriting it. To edit an existing file's
+    /// header in place, use [`update_file`](Self::update_file) instead.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I/O error opening or writing `path`, including
+    /// `AlreadyExists` when the path already exists.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let path = std::env::temp_dir().join("xisf-header-doctest-write.xisf");
+    /// # std::fs::remove_file(&path).ok();
+    /// let mut header = Header::new();
+    /// header.set("IMAGETYP", "Master Dark")?;
+    /// let hints = StructuralHints::default();
+    /// let data = [0u8; 4]; // the caller's own pixel bytes
+    ///
+    /// header.write_to_file(&path, &hints, &data)?;
+    ///
+    /// let bytes = std::fs::read(&path)?;
+    /// assert_eq!(&bytes[bytes.len() - 4..], &data);
+    /// let reloaded = Header::read_from_file(&path)?;
+    /// assert_eq!(reloaded, header);
+    ///
+    /// // A second write to the same path never clobbers it.
+    /// assert!(header.write_to_file(&path, &hints, &data).is_err());
+    /// # std::fs::remove_file(&path).ok();
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
+    pub fn write_to_file<P: AsRef<Path>>(
+        &self,
+        path: P,
+        hints: &StructuralHints,
+        data: &[u8],
+    ) -> Result<()> {
+        let header_bytes = self.render_container_header(hints, data.len());
+        let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        file.write_all(&header_bytes)?;
+        file.write_all(data)?;
+        Ok(())
+    }
+
+    /// Render the preamble + XML header for a container whose data block is
+    /// `size` bytes, per `hints`. Shared by [`to_header_bytes`](Self::to_header_bytes)
+    /// (`size` derived from `hints`' geometry) and
+    /// [`write_to_file`](Self::write_to_file) (`size` = the caller's actual
+    /// `data.len()`, so the emitted `SIZE` always matches the bytes on disk).
+    fn render_container_header(&self, hints: &StructuralHints, size: usize) -> Vec<u8> {
         // Two-pass render: the attachment offset depends on the header length,
         // which depends on the offset's text. A fixed-width offset keeps the
         // length identical between passes.
@@ -323,5 +384,64 @@ mod tests {
             "{xml}"
         );
         assert!(xml.contains(r#"name="GAIN" value="100""#), "{xml}");
+    }
+
+    /// `write_to_file`'s emitted `SIZE` must track the caller's actual
+    /// `data.len()`, not the size implied by `hints`' geometry — the two can
+    /// legitimately diverge (e.g. a caller passing header-only `&[]` against
+    /// non-trivial hints).
+    #[test]
+    fn write_to_file_size_matches_data_len_not_hints() {
+        let h = Header::new();
+        let mismatched_hints = hints("4:4:1", "UInt16"); // implies 32 bytes
+        let data = [1u8, 2, 3]; // actual payload is 3 bytes
+        let path = std::env::temp_dir().join(format!(
+            "xisf-header-writer-size-{}-{}.xisf",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::remove_file(&path).ok();
+
+        h.write_to_file(&path, &mismatched_hints, &data).unwrap();
+
+        let bytes = std::fs::read(&path).unwrap();
+        let xml_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let xml = std::str::from_utf8(&bytes[16..16 + xml_len]).unwrap();
+        assert!(
+            xml.contains(&format!(":{}\"", data.len())),
+            "SIZE must equal data.len() (3), not the hints-implied 32: {xml}"
+        );
+        assert_eq!(bytes.len(), 16 + xml_len + data.len());
+        assert_eq!(&bytes[bytes.len() - data.len()..], &data);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// `write_to_file` must never clobber an existing file — the crate's only
+    /// path for editing an existing file is `update_file`.
+    #[test]
+    fn write_to_file_errors_if_path_exists() {
+        let h = Header::new();
+        let path = std::env::temp_dir().join(format!(
+            "xisf-header-writer-exists-{}-{}.xisf",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::write(&path, b"pre-existing content").unwrap();
+
+        let err = h
+            .write_to_file(&path, &StructuralHints::default(), &[])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::Error::Io(e) if e.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"pre-existing content",
+            "the existing file must be left untouched"
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 }
