@@ -4,9 +4,17 @@
 use proptest::prelude::*;
 use xisf_header::{Header, Literal, StructuralHints};
 
-/// Valid keyword names: 1–8 ASCII alphanumerics, `-`, or `_`.
+/// Valid keyword names: 1–8 ASCII alphanumerics, `-`, or `_`. Excludes the
+/// FITS commentary keywords (`HISTORY`/`COMMENT`): those are always
+/// serialized value="" + text-in-comment (see `is_commentary`), which this
+/// generic literal/comment fuzz strategy doesn't model — they get dedicated
+/// tests instead.
 fn keyword_name() -> impl Strategy<Value = String> {
-    proptest::string::string_regex("[A-Za-z0-9_-]{1,8}").unwrap()
+    proptest::string::string_regex("[A-Za-z0-9_-]{1,8}")
+        .unwrap()
+        .prop_filter("excludes commentary keywords", |n| {
+            n != "HISTORY" && n != "COMMENT"
+        })
 }
 
 /// String values: printable ASCII (attribute-value normalization folds tabs

@@ -136,12 +136,19 @@ impl Header {
         for kw in &self.keywords {
             let mut e = BytesStart::new("FITSKeyword");
             e.push_attribute(("name", kw.name.as_str()));
-            let value = match &kw.value {
-                Value::Str(s) => format!("'{s}'"),
-                Value::Literal(s) => s.clone(),
-            };
-            e.push_attribute(("value", value.as_str()));
-            e.push_attribute(("comment", kw.comment.as_str()));
+            if crate::keyword::is_commentary(&kw.name) {
+                // FITS commentary keywords have no value: the free text lives
+                // in `comment`, with an empty `value` (see `is_commentary`).
+                e.push_attribute(("value", ""));
+                e.push_attribute(("comment", kw.value.text()));
+            } else {
+                let value = match &kw.value {
+                    Value::Str(s) => format!("'{s}'"),
+                    Value::Literal(s) => s.clone(),
+                };
+                e.push_attribute(("value", value.as_str()));
+                e.push_attribute(("comment", kw.comment.as_str()));
+            }
             w.write_event(Event::Empty(e)).expect(INFALLIBLE);
         }
 
@@ -276,5 +283,45 @@ mod tests {
         let h = Header::new();
         let parsed = Header::parse(&h.to_header_bytes(&StructuralHints::default())).unwrap();
         assert_eq!(parsed, h);
+    }
+
+    /// HISTORY/COMMENT have no FITS value — the text must land in the
+    /// `comment` attribute with an empty `value`, not a quoted `value` (the
+    /// bug this fix corrects: the old form was malformed FITS commentary).
+    #[test]
+    fn commentary_keywords_serialize_as_empty_value_with_comment_text() {
+        let mut h = Header::new();
+        h.append("HISTORY", "reduced with siril").unwrap();
+        h.append("COMMENT", "processed in PixInsight").unwrap();
+        let bytes = h.to_header_bytes(&StructuralHints::default());
+        let xml = std::str::from_utf8(&bytes[16..]).unwrap();
+
+        assert!(
+            xml.contains(r#"name="HISTORY" value="" comment="reduced with siril""#),
+            "xml: {xml}"
+        );
+        assert!(
+            xml.contains(r#"name="COMMENT" value="" comment="processed in PixInsight""#),
+            "xml: {xml}"
+        );
+        assert!(!xml.contains("&apos;reduced with siril&apos;"));
+        assert!(!xml.contains("&apos;processed in PixInsight&apos;"));
+    }
+
+    /// Non-commentary keywords keep their pre-fix serialization: strings
+    /// quoted in `value`, numbers bare, `comment` used for the FITS comment.
+    #[test]
+    fn non_commentary_keywords_are_unaffected() {
+        let mut h = Header::new();
+        h.set("OBJECT", "M31").unwrap();
+        h.set("GAIN", 100_i64).unwrap();
+        let bytes = h.to_header_bytes(&StructuralHints::default());
+        let xml = std::str::from_utf8(&bytes[16..]).unwrap();
+
+        assert!(
+            xml.contains(r#"name="OBJECT" value="&apos;M31&apos;""#),
+            "{xml}"
+        );
+        assert!(xml.contains(r#"name="GAIN" value="100""#), "{xml}");
     }
 }

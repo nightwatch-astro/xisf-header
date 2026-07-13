@@ -345,6 +345,57 @@ fn bom_and_gap_no_op_and_edit() {
     );
 }
 
+/// A file containing `HISTORY` keywords (in the canonical, spec-conformant
+/// `value="" comment="…"` form) must still no-op round-trip byte-exact, and
+/// an edit that actually changes a `HISTORY` line must re-render it in that
+/// same comment-attribute form (not the old malformed quoted-value form).
+#[test]
+fn history_keyword_no_op_and_edit_round_trip() {
+    let data = ramp_data(48);
+    let keywords = r#"<FITSKeyword name="HISTORY" value="" comment="calibrated with WBPP"/>
+<FITSKeyword name="HISTORY" value="" comment="registered"/>
+<FITSKeyword name="OBJECT" value="'M31'" comment="target"/>"#;
+    let container = mk_xisf(keywords, "", UNMODELED_METADATA, &data);
+    let path =
+        std::env::temp_dir().join(format!("xisf-header-history-{}.xisf", std::process::id()));
+
+    // No-op: byte-exact.
+    std::fs::write(&path, &container).unwrap();
+    Header::update_file(&path, |_h| Ok(())).unwrap();
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        container,
+        "no-op edit on a HISTORY-containing file must be byte-exact"
+    );
+
+    // An edit to a HISTORY occurrence re-renders it in the comment-attr form.
+    std::fs::write(&path, &container).unwrap();
+    Header::update_file(&path, |h| {
+        h.set(("HISTORY", 1), "reprocessed")?;
+        Ok(())
+    })
+    .unwrap();
+    let edited_bytes = std::fs::read(&path).unwrap();
+    let edited_xml = std::str::from_utf8(&edited_bytes).unwrap();
+    assert!(
+        contains(
+            edited_bytes.as_slice(),
+            br#"name="HISTORY" value="" comment="reprocessed""#
+        ),
+        "edited HISTORY must use the comment-attr form: {edited_xml}"
+    );
+    assert!(!edited_xml.contains("&apos;reprocessed&apos;"));
+
+    let edited_header = Header::read_from_file(&path).unwrap();
+    assert_eq!(
+        edited_header.get_all::<String>("HISTORY"),
+        ["calibrated with WBPP", "reprocessed"]
+    );
+    assert_eq!(edited_header.get_str("OBJECT").unwrap(), Some("M31"));
+
+    std::fs::remove_file(&path).ok();
+}
+
 /// The atomic write follows a symlink (replacing its target, leaving the
 /// link a link) and preserves the target's unix permission mode.
 #[cfg(unix)]

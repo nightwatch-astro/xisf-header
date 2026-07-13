@@ -27,8 +27,8 @@ const PIXINSIGHT_STYLE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <FITSKeyword name="GAIN" value="100" comment="Sensor gain"/>
     <FITSKeyword name="DATE-OBS" value="'2026-07-11T22:15:03.123'" comment="UTC start of exposure"/>
     <FITSKeyword name="OBJECT" value="'NGC 7000'" comment="Target"/>
-    <FITSKeyword name="HISTORY" value="calibrated with WBPP" comment=""/>
-    <FITSKeyword name="HISTORY" value="registered" comment=""/>
+    <FITSKeyword name="HISTORY" value="" comment="calibrated with WBPP"/>
+    <FITSKeyword name="HISTORY" value="" comment="registered"/>
     <Property id="Instrument:Telescope:FocalLength" type="Float32" value="0.53"/>
     <Property id="Instrument:Sensor:Temperature" type="Float32" value="-10.0"/>
     <Property id="Observation:Object:Name" type="String">NGC 7000</Property>

@@ -326,17 +326,24 @@ fn tmp_path_for(path: &Path) -> std::path::PathBuf {
     path.with_file_name(tmp_name)
 }
 
-/// Render a single `<FITSKeyword .../>` element.
+/// Render a single `<FITSKeyword .../>` element. Mirrors
+/// [`crate::writer::Header::render_xml`]'s keyword rendering — kept in sync
+/// by hand since the splice path re-renders only edited elements.
 fn render_keyword(kw: &FitsKeyword) -> Vec<u8> {
     let mut w = Writer::new(Vec::new());
     let mut e = BytesStart::new("FITSKeyword");
     e.push_attribute(("name", kw.name.as_str()));
-    let value = match &kw.value {
-        Value::Str(s) => format!("'{s}'"),
-        Value::Literal(s) => s.clone(),
-    };
-    e.push_attribute(("value", value.as_str()));
-    e.push_attribute(("comment", kw.comment.as_str()));
+    if crate::keyword::is_commentary(&kw.name) {
+        e.push_attribute(("value", ""));
+        e.push_attribute(("comment", kw.value.text()));
+    } else {
+        let value = match &kw.value {
+            Value::Str(s) => format!("'{s}'"),
+            Value::Literal(s) => s.clone(),
+        };
+        e.push_attribute(("value", value.as_str()));
+        e.push_attribute(("comment", kw.comment.as_str()));
+    }
     w.write_event(Event::Empty(e)).expect(INFALLIBLE);
     w.into_inner()
 }
