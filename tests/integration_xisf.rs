@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! End-to-end tests against real, standards-valid monolithic XISF files:
 //! preamble + XML header (with an unmodeled element the crate never parses)
 //! plus a real, non-zero attached data block. Covers three header-size

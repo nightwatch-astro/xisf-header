@@ -1,3 +1,7 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 //! Byte-exact, data-preserving `Header::update_file`: splice only the edited
 //! `<FITSKeyword>`/`<Property>` elements (and the attachment offset, if the
 //! header's length changed) into the original file's raw bytes, leaving
