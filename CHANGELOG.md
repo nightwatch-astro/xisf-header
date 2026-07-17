@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.0...v0.4.1) (2026-07-17)
+
+
+### Features
+
+* delegate DATE-OBS parsing to skymath parse_date_obs ([#24](https://github.com/nightwatch-astro/xisf-header/issues/24)) ([6c0262d](https://github.com/nightwatch-astro/xisf-header/commit/6c0262de8ef828900654090b338a898f3e13a424)), closes [#5](https://github.com/nightwatch-astro/xisf-header/issues/5)
+
 ## [0.4.0](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.5...v0.4.0) (2026-07-17)
 
 
