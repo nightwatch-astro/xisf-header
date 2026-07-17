@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.5...v0.4.0) (2026-07-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* relicense from Apache-2.0 to MPL-2.0 ([#18](https://github.com/nightwatch-astro/xisf-header/issues/18))
+
+### Bug Fixes
+
+* store CLA signatures on unprotected branch, allowlist owner ([#22](https://github.com/nightwatch-astro/xisf-header/issues/22)) ([0a959ee](https://github.com/nightwatch-astro/xisf-header/commit/0a959ee49f2c33d254ec7954903284ee63cbe5a1))
+* use GitHub App token for CLA bot instead of PAT ([#20](https://github.com/nightwatch-astro/xisf-header/issues/20)) ([3c61395](https://github.com/nightwatch-astro/xisf-header/commit/3c6139502a7b257fe982d6daad5e43736a26ab3c))
+
+
+### Miscellaneous Chores
+
+* relicense from Apache-2.0 to MPL-2.0 ([#18](https://github.com/nightwatch-astro/xisf-header/issues/18)) ([9dd9dc7](https://github.com/nightwatch-astro/xisf-header/commit/9dd9dc78d2915e2b9142e55bd2a02f56dda4a222))
+
 ## [0.3.5](https://github.com/nightwatch-astro/xisf-header/compare/v0.3.4...v0.3.5) (2026-07-13)
 
 
