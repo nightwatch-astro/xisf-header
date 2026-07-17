@@ -16,6 +16,7 @@ publish = true
 [dependencies]
 quick-xml = "0.41"
 serde = { version = "1.0.228", features = ["derive"], optional = true }
+skymath = "0.4"
 thiserror = "2.0.18"
 time = { version = "0.3.44", features = ["parsing", "formatting"] }
 

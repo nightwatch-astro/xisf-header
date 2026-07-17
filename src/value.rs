@@ -122,25 +122,12 @@ fn lenient_int(text: &str) -> Option<i64> {
 }
 
 /// Parse a FITS/XISF ISO-8601 civil date/time, with or without fractional
-/// seconds, or a bare calendar date (interpreted at midnight).
+/// seconds, or a bare calendar date (interpreted at midnight). Delegates to
+/// `skymath::parse_date_obs` so this crate carries one implementation of
+/// FITS `DATE-OBS` parsing instead of a hand-rolled duplicate (see
+/// nightwatch-astro/xisf-header#5).
 fn parse_datetime(text: &str) -> Option<PrimitiveDateTime> {
-    let s = text.trim().trim_end_matches('Z');
-    for pat in [
-        "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]",
-        "[year]-[month]-[day]T[hour]:[minute]:[second]",
-    ] {
-        if let Ok(fmt) = time::format_description::parse_borrowed::<2>(pat) {
-            if let Ok(dt) = PrimitiveDateTime::parse(s, &fmt) {
-                return Some(dt);
-            }
-        }
-    }
-    if let Ok(fmt) = time::format_description::parse_borrowed::<2>("[year]-[month]-[day]") {
-        if let Ok(date) = time::Date::parse(s, &fmt) {
-            return Some(PrimitiveDateTime::new(date, time::Time::MIDNIGHT));
-        }
-    }
-    None
+    skymath::parse_date_obs(text).ok()
 }
 
 /// Produce a [`Value`] for a write, with the on-disk kind chosen by the Rust
