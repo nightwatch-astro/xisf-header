@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.2...v0.4.3) (2026-07-22)
+
+
+### Bug Fixes
+
+* support shared time 0.3.41 dependency graphs ([#28](https://github.com/nightwatch-astro/xisf-header/issues/28)) ([cecf844](https://github.com/nightwatch-astro/xisf-header/commit/cecf844825d39c3c99ea38a8cb5a4e2cc705d623))
+
 ## [0.4.2](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.1...v0.4.2) (2026-07-22)
 
 
