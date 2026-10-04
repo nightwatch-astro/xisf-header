@@ -5,6 +5,7 @@
 #![doc = include_str!("../README.md")]
 
 mod error;
+mod geometry;
 mod header;
 mod key;
 mod keyword;
@@ -15,6 +16,7 @@ mod value;
 mod writer;
 
 pub use error::{Error, Result};
+pub use geometry::{GeometryError, ImageGeometry};
 pub use header::{Header, StructuralHints};
 pub use key::Key;
 pub use keyword::FitsKeyword;

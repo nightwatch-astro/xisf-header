@@ -56,7 +56,10 @@ fn serialized_header_survives_container_round_trip_too() {
     let h = sample();
     let container = h.to_header_bytes(&StructuralHints::default());
     let parsed = Header::parse(&container).unwrap();
+    assert!(parsed.image_geometry().is_some());
     let json = serde_json::to_string(&parsed).unwrap();
     let back: Header = serde_json::from_str(&json).unwrap();
     assert_eq!(back, h);
+    // The container's geometry is not part of the serialized header.
+    assert_eq!(back.image_geometry(), None);
 }

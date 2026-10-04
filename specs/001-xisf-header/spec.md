@@ -47,12 +47,24 @@ a `Header` back into an XISF container. Header-only — it never touches pixel d
   Layouts it cannot splice safely (zero or multiple attachments) return
   `Unsupported`. (Superseded: the earlier `write_to_file`, which rewrote a
   container from `StructuralHints` and zero-filled data, was removed.)
+- **FR-8 Native image geometry.** The parse pass also reads the `<Image>`
+  element's `geometry` attribute (`dim1:…:dimN:channel-count`, N ≥ 1, XISF
+  §8.3 integer forms). `image_geometry()` returns `None` for no `<Image>`,
+  `Some(Ok(ImageGeometry))` with positive `u32` `dimensions()`/`channels()`
+  for one well-formed image, and `Some(Err(GeometryError))` otherwise:
+  `MultipleImages` (no image is chosen), `Missing` (no attribute), or
+  `Malformed` (zero, negative, out-of-range, empty, or non-integer items; a
+  channel count alone; unreadable attributes). `image_geometry_raw()` keeps
+  the single image's XML-decoded attribute value. Read-only: excluded from `Header`
+  equality and serde, never written.
 
 ## Acceptance
 
 - Bad signature → error; truncated input → error.
 - `Header::parse(header.to_header_bytes(&hints)) == header` (round-trip),
   including value kind (string vs. literal) and comments.
+- `image_geometry()` reads a file's native geometry without `NAXISn` keywords;
+  malformed geometry and multiple images are errors, never guessed dimensions.
 - A no-op `update_file` reproduces the input file byte-for-byte; an edit changes
   only the intended keyword/property (plus the offset) while unmodeled XML and
   the attached data survive intact.
