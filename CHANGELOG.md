@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.4](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.3...v0.4.4) (2026-10-04)
+
+
+### Features
+
+* expose native XISF image geometry from the header parser ([#30](https://github.com/nightwatch-astro/xisf-header/issues/30)) ([c70dd1f](https://github.com/nightwatch-astro/xisf-header/commit/c70dd1f7813a9ae0649ea59c5cc6436267baaf2f))
+
 ## [0.4.3](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.2...v0.4.3) (2026-07-22)
 
 
