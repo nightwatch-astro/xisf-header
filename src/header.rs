@@ -7,13 +7,15 @@
 use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
+use crate::geometry::{GeometryError, ImageGeometry, NativeGeometry};
 use crate::key::Key;
 use crate::keyword::FitsKeyword;
 use crate::property::Property;
 use crate::value::{FromField, IntoValue};
 
 /// Geometry hints used when serializing a standalone container. A [`Header`]
-/// stores only keywords and properties — never image structure — so these
+/// models keywords and properties, not image structure: the geometry a parsed
+/// header reports ([`Header::image_geometry`]) is never written back, so these
 /// hints always supply the `<Image>` element's `geometry`, `sampleFormat`, and
 /// `colorSpace`. Defaults to a minimal 1×1 8-bit grayscale image.
 ///
@@ -50,7 +52,9 @@ impl Default for StructuralHints {
 }
 
 /// A parsed XISF header: an ordered list of [`FitsKeyword`]s plus a map of
-/// XISF `<Property>` elements.
+/// XISF `<Property>` elements. A header parsed from a container also reports
+/// that container's native `<Image>` geometry, read-only, through
+/// [`image_geometry`](Self::image_geometry).
 ///
 /// Keyword access is **strict**: a bare name must be unique, or the accessor
 /// returns [`Error::Ambiguous`]. Repeated keywords are reached with an
@@ -63,6 +67,12 @@ impl Default for StructuralHints {
 /// [`update_file`](Self::update_file) to splice the change into an existing
 /// one.
 ///
+/// Equality compares keywords and properties only. The parsed image geometry
+/// describes the container a header was read from, so it is left out of
+/// equality and, with the `serde` feature, of serialization: a header still
+/// equals itself re-parsed from [`to_header_bytes`](Self::to_header_bytes)
+/// whatever geometry the hints declare.
+///
 /// ```
 /// use xisf_header::Header;
 ///
@@ -72,12 +82,27 @@ impl Default for StructuralHints {
 /// assert_eq!(header.get_str("IMAGETYP")?, Some("Master Dark"));
 /// # Ok::<(), xisf_header::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header {
     pub(crate) keywords: Vec<FitsKeyword>,
     pub(crate) properties: BTreeMap<String, Property>,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) geometry: NativeGeometry,
 }
+
+impl PartialEq for Header {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            keywords,
+            properties,
+            geometry: _,
+        } = self;
+        *keywords == other.keywords && *properties == other.properties
+    }
+}
+
+impl Eq for Header {}
 
 impl Header {
     /// Create an empty header.
@@ -690,6 +715,69 @@ impl Header {
     /// ```
     pub fn remove_property(&mut self, id: &str) -> bool {
         self.properties.remove(id).is_some()
+    }
+
+    // ----- native image geometry -----------------------------------------
+
+    /// The native geometry of the container's `<Image>` element, read from
+    /// its `geometry` attribute by the same pass that reads the keywords. It
+    /// does not depend on `NAXISn` FITS keywords, which an XISF file need not
+    /// carry.
+    ///
+    /// - `None`: the header declares no `<Image>` element. This is also the
+    ///   value for a header built with [`Header::new`] or deserialized with
+    ///   the `serde` feature.
+    /// - `Some(Err(_))`: there is no single well-formed image geometry, see
+    ///   [`GeometryError`]. No dimensions are guessed; with several `<Image>`
+    ///   elements, none is chosen.
+    /// - `Some(Ok(_))`: the single `<Image>` element's geometry, with every
+    ///   dimension and the channel count positive.
+    ///
+    /// ```
+    /// use xisf_header::{Header, StructuralHints};
+    ///
+    /// let hints = StructuralHints {
+    ///     geometry: "4:4:1".to_owned(),
+    ///     sample_format: "UInt16".to_owned(),
+    ///     color_space: "Gray".to_owned(),
+    /// };
+    /// let header = Header::parse(&Header::new().to_header_bytes(&hints))?;
+    /// match header.image_geometry() {
+    ///     Some(Ok(geometry)) => {
+    ///         assert_eq!(geometry.dimensions(), &[4, 4]);
+    ///         assert_eq!(geometry.channels(), 1);
+    ///     }
+    ///     Some(Err(e)) => panic!("unusable <Image> geometry: {e}"),
+    ///     None => panic!("no <Image> element"),
+    /// }
+    /// assert!(Header::new().image_geometry().is_none());
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
+    #[must_use]
+    pub fn image_geometry(&self) -> Option<std::result::Result<&ImageGeometry, GeometryError>> {
+        self.geometry.parsed()
+    }
+
+    /// The single `<Image>` element's `geometry` attribute text, unparsed,
+    /// whether or not it is well-formed. `None` when there is no `<Image>`
+    /// element, more than one, or the image has no readable `geometry`
+    /// attribute.
+    ///
+    /// ```
+    /// use xisf_header::{GeometryError, Header, StructuralHints};
+    ///
+    /// let hints = StructuralHints {
+    ///     geometry: "4:0:1".to_owned(),
+    ///     ..StructuralHints::default()
+    /// };
+    /// let header = Header::parse(&Header::new().to_header_bytes(&hints))?;
+    /// assert_eq!(header.image_geometry(), Some(Err(GeometryError::Malformed)));
+    /// assert_eq!(header.image_geometry_raw(), Some("4:0:1"));
+    /// # Ok::<(), xisf_header::Error>(())
+    /// ```
+    #[must_use]
+    pub fn image_geometry_raw(&self) -> Option<&str> {
+        self.geometry.raw()
     }
 
     // ----- internals -----------------------------------------------------

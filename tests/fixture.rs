@@ -68,6 +68,11 @@ fn realistic_header_parses_fully() {
         Some(0.53)
     );
     assert_eq!(h.property("Observation:Object:Name"), Some("NGC 7000"));
+
+    // Native geometry comes from <Image>, not its nested <Thumbnail>.
+    let geometry = h.image_geometry().unwrap().unwrap();
+    assert_eq!(geometry.dimensions(), &[6248, 4176]);
+    assert_eq!(geometry.channels(), 1);
 }
 
 #[test]

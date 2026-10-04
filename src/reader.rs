@@ -12,6 +12,7 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::{Reader, XmlVersion};
 
 use crate::error::{Error, Result};
+use crate::geometry::GeometryError;
 use crate::header::Header;
 use crate::keyword::{is_commentary, FitsKeyword};
 use crate::property::Property;
@@ -219,6 +220,7 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
                 } else {
                     if tag.eq_ignore_ascii_case(b"Image") {
                         image_count += 1;
+                        header.geometry.observe_image(|| image_geometry_attr(&e));
                     }
                     record_location(xml, start, end, tag, &mut locations);
                 }
@@ -242,6 +244,7 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
                 } else {
                     if tag.eq_ignore_ascii_case(b"Image") {
                         image_count += 1;
+                        header.geometry.observe_image(|| image_geometry_attr(&e));
                     }
                     record_location(xml, start, end, tag, &mut locations);
                 }
@@ -442,6 +445,30 @@ fn parse_keyword(e: &BytesStart) -> Result<Option<FitsKeyword>> {
         value,
         comment,
     }))
+}
+
+/// Read an `<Image>` element's `geometry` attribute value (attribute name
+/// case-insensitive). Every attribute is checked, so a duplicated or
+/// otherwise malformed attribute anywhere on the element yields
+/// [`GeometryError::Malformed`]. That error stays inside the geometry: the
+/// header's keywords and properties still parse.
+fn image_geometry_attr(e: &BytesStart) -> std::result::Result<Option<String>, GeometryError> {
+    let mut geometry = None;
+    for attr in e.attributes() {
+        let attr = attr.map_err(|_| GeometryError::Malformed)?;
+        if attr.key.as_ref().eq_ignore_ascii_case(b"geometry") {
+            if geometry.is_some() {
+                // Same name in different case: quick_xml's duplicate check
+                // is case-sensitive.
+                return Err(GeometryError::Malformed);
+            }
+            let value = attr
+                .normalized_value(XmlVersion::Implicit1_0)
+                .map_err(|_| GeometryError::Malformed)?;
+            geometry = Some(value.into_owned());
+        }
+    }
+    Ok(geometry)
 }
 
 /// Read a `<Property>` element's attributes: `id`, `type`, `value`,

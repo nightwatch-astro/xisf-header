@@ -18,10 +18,11 @@ serializes a `Header` back into a valid, self-contained XISF container.
 src/
   lib.rs      crate root, docs, public re-exports (incl. `pub use time`)
   error.rs    Error enum + Result alias
+  geometry.rs ImageGeometry + GeometryError: native <Image geometry> parsing (read-only)
   key.rs      Key: unified "NAME" / ("NAME", n) keyword address
   value.rs    Value + FromField (read) + IntoValue (write) + Literal/Fixed/Sci
   keyword.rs  FitsKeyword record
-  header.rs   Header: strict CRUD, typed get/set, atomic batch, property CRUD, StructuralHints
+  header.rs   Header: strict CRUD, typed get/set, atomic batch, property CRUD, image geometry, StructuralHints
   reader.rs   Header::parse / read_from_file (preamble validation + XML extraction, incl. byte-span index)
   writer.rs   Header::to_header_bytes / update_file (delegates the splice to splice.rs)
   splice.rs   byte-exact update_file: diff + splice only edited elements, preserving unmodeled XML + data

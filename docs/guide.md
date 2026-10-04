@@ -95,6 +95,32 @@ assert_eq!(Header::parse(&container)?, header);
 # Ok::<(), xisf_header::Error>(())
 ```
 
+## Read the image geometry
+
+A parsed header also reports its container's native `<Image>` geometry:
+[`Header::image_geometry`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.image_geometry)
+returns the axis lengths and channel count from the `geometry` attribute,
+with no need for `NAXISn` keywords. `None` means the header has no `<Image>`
+element; `Some(Err(_))` is a
+[`GeometryError`](https://docs.rs/xisf-header/latest/xisf_header/enum.GeometryError.html)
+for several images or a missing or malformed geometry, never guessed
+dimensions. The geometry is read-only: it is not part of header equality,
+and writes take theirs from `StructuralHints`.
+
+```rust
+# use xisf_header::{Header, StructuralHints};
+# let header = Header::new();
+# let container = header.to_header_bytes(&StructuralHints::default());
+let parsed = Header::parse(&container)?;
+let geometry = parsed
+    .image_geometry()
+    .expect("one <Image> element")
+    .expect("well-formed geometry");
+assert_eq!(geometry.dimensions(), &[1, 1]); // StructuralHints::default() is 1x1x1
+assert_eq!(geometry.channels(), 1);
+# Ok::<(), xisf_header::Error>(())
+```
+
 ## Edit a file's header in place
 
 The common case: change a keyword or property on an existing XISF file

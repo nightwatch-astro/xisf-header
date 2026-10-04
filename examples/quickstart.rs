@@ -55,7 +55,15 @@ fn main() -> Result<(), xisf_header::Error> {
         Some(0.53)
     );
 
-    // 7. Edit the file's header in place — byte-exact, pixel data untouched —
+    // 7. Read the container's native <Image> geometry (1x1x1, from the hints).
+    let geometry = reloaded
+        .image_geometry()
+        .expect("one <Image> element")
+        .expect("well-formed geometry");
+    assert_eq!(geometry.dimensions(), &[1, 1]);
+    assert_eq!(geometry.channels(), 1);
+
+    // 8. Edit the file's header in place — byte-exact, pixel data untouched —
     //    then clean up.
     Header::update_file(&path, |h| {
         h.set("OBJECT", "NGC 7000")?;

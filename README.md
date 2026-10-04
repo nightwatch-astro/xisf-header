@@ -22,6 +22,14 @@ the UTF-8 XML header, and never reads image/pixel data.
   [`Header::read_from_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.read_from_file).
   The `XISF0100` signature, the little-endian XML-length field (capped at 8
   MiB), and UTF-8 encoding are validated.
+- **Native image geometry.**
+  [`image_geometry`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.image_geometry)
+  reports the `<Image>` element's `geometry` (axis lengths and channel count,
+  any dimensionality), read in the same pass as the keywords and independent
+  of `NAXISn` keywords. Several images or a missing or malformed geometry is
+  an explicit
+  [`GeometryError`](https://docs.rs/xisf-header/latest/xisf_header/enum.GeometryError.html),
+  never guessed dimensions.
 - **Strict keyword access.** A bare name must be unique or the accessor
   returns
   [`Error::Ambiguous`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Ambiguous);
@@ -74,7 +82,8 @@ xisf-header = "0.2"
 
 - **`serde`** — derive `Serialize`/`Deserialize` on `Header`,
   [`FitsKeyword`](https://docs.rs/xisf-header/latest/xisf_header/struct.FitsKeyword.html),
-  `Property`, and the value types:
+  `Property`, and the value types (a parsed header's image geometry describes
+  its container and is not serialized):
 
   ```toml
   xisf-header = { version = "0.2", features = ["serde"] }
@@ -101,6 +110,32 @@ let image_type = header.get_str("IMAGETYP")?;
 
 // XISF <Property> access.
 let focal_length_m = header.property_get::<f64>("Instrument:Telescope:FocalLength");
+# Ok::<(), xisf_header::Error>(())
+```
+
+### Read the image geometry
+
+[`Header::image_geometry`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.image_geometry)
+returns the native `<Image geometry>` of a parsed file:
+[`ImageGeometry::dimensions`](https://docs.rs/xisf-header/latest/xisf_header/struct.ImageGeometry.html#method.dimensions)
+(X, Y, … lengths) and
+[`channels`](https://docs.rs/xisf-header/latest/xisf_header/struct.ImageGeometry.html#method.channels),
+all positive.
+
+```rust,no_run
+use xisf_header::Header;
+
+let header = Header::read_from_file("frame.xisf")?;
+match header.image_geometry() {
+    // geometry="6248:4176:1" → dimensions [6248, 4176], 1 channel.
+    Some(Ok(geometry)) => println!("{:?} × {}", geometry.dimensions(), geometry.channels()),
+    // Several <Image> elements, or a missing or malformed geometry attribute.
+    Some(Err(e)) => eprintln!("no usable geometry: {e}"),
+    // No <Image> element.
+    None => {}
+}
+// The attribute text as written, also for a malformed geometry.
+let raw: Option<&str> = header.image_geometry_raw();
 # Ok::<(), xisf_header::Error>(())
 ```
 
