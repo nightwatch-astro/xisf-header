@@ -55,7 +55,7 @@ a `Header` back into an XISF container. Header-only — it never touches pixel d
   `MultipleImages` (no image is chosen), `Missing` (no attribute), or
   `Malformed` (zero, negative, out-of-range, empty, or non-integer items; a
   channel count alone; unreadable attributes). `image_geometry_raw()` keeps
-  the single image's attribute text. Read-only: excluded from `Header`
+  the single image's XML-decoded attribute value. Read-only: excluded from `Header`
   equality and serde, never written.
 
 ## Acceptance

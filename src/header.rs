@@ -758,7 +758,8 @@ impl Header {
         self.geometry.parsed()
     }
 
-    /// The single `<Image>` element's `geometry` attribute text, unparsed,
+    /// The single `<Image>` element's `geometry` attribute value, unparsed
+    /// (XML entities decoded, as for every attribute this crate reads),
     /// whether or not it is well-formed. `None` when there is no `<Image>`
     /// element, more than one, or the image has no readable `geometry`
     /// attribute.

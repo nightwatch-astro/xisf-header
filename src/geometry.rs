@@ -71,7 +71,7 @@ impl ImageGeometry {
 /// (decimal `\s*[+-]?(0|[1-9][0-9]*)\s*`, or `0b`/`0o`/`0x` binary, octal,
 /// or hexadecimal), which must also be positive and fit in a `u32`.
 fn parse_item(item: &str) -> Option<u32> {
-    let item = item.trim();
+    let item = item.trim_matches(is_regexp_space);
     let (digits, radix) = match item.as_bytes() {
         [b'0', b'b' | b'B', ..] => (&item[2..], 2),
         [b'0', b'o' | b'O', ..] => (&item[2..], 8),
@@ -91,6 +91,24 @@ fn parse_item(item: &str) -> Option<u32> {
     // Fails on overflow past `u32::MAX`.
     let value = u32::from_str_radix(digits, radix).ok()?;
     (value > 0).then_some(value)
+}
+
+/// The ECMAScript `\s` class used by the XISF §8.3 grammars: the WhiteSpace
+/// code points (tab, vertical tab, form feed, U+FEFF, and every `Zs` space
+/// separator) plus the LineTerminators. Unlike [`char::is_whitespace`] it
+/// includes U+FEFF and excludes U+0085.
+fn is_regexp_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{000B}' | '\u{000C}' | '\r' | ' ' | '\u{00A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
 }
 
 /// Why a parsed header has no usable [`ImageGeometry`]. Returned inside

@@ -134,7 +134,7 @@ match header.image_geometry() {
     // No <Image> element.
     None => {}
 }
-// The attribute text as written, also for a malformed geometry.
+// The attribute's XML-decoded value, also for a malformed geometry.
 let raw: Option<&str> = header.image_geometry_raw();
 # Ok::<(), xisf_header::Error>(())
 ```

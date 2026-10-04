@@ -116,6 +116,7 @@ fn every_legal_geometry_form_reads_exactly() {
         ("64:64:16:2", &[64, 64, 16], 2),      // three-dimensional
         ("4294967295:1:1", &[u32::MAX, 1], 1), // u32 boundary
         ("+4: 4 :1", &[4, 4], 1),              // sign, whitespace (§8.3.1)
+        ("\u{FEFF}4:4\u{3000}:1", &[4, 4], 1), // ECMAScript \s: U+FEFF, Zs
         ("0x10:0X10:0b1", &[16, 16], 1),       // hex, binary (§8.3.2)
         ("0o10:0x0004:1", &[8, 4], 1),         // octal, zero-padded hex
     ];
@@ -136,6 +137,14 @@ fn every_legal_geometry_form_reads_exactly() {
         header.image_geometry().unwrap().unwrap().dimensions(),
         &[4, 4]
     );
+
+    // The raw value is XML-decoded: a character reference reads as its digit.
+    let header = image_header("geometry=\"&#52;:4:1\"");
+    assert_eq!(header.image_geometry_raw(), Some("4:4:1"));
+    assert_eq!(
+        header.image_geometry().unwrap().unwrap().dimensions(),
+        &[4, 4]
+    );
 }
 
 #[test]
@@ -146,6 +155,7 @@ fn malformed_geometry_is_an_error_and_keeps_raw_text() {
         "4:4:",            // empty channel count
         ":4:1",            // empty dimension
         "4::1",            // empty dimension
+        "\u{0085}4:4:1",   // U+0085 is not ECMAScript \s
         "0:4:1",           // zero width
         "4:0:1",           // zero height
         "4:4:0",           // zero channels
@@ -210,7 +220,8 @@ fn multiple_images_are_an_error_never_the_first_image() {
     for (first, second) in [("4:4:1", "4:4:1"), ("4:4:1", "8:8:3"), ("0:0:0", "4:4:1")] {
         let xml = format!(
             "<xisf version=\"1.0\" xmlns=\"http://www.pixinsight.com/xisf\">\
-             <Image geometry=\"{first}\" sampleFormat=\"UInt16\" colorSpace=\"Gray\"/>\
+             <Image geometry=\"{first}\" sampleFormat=\"UInt16\" colorSpace=\"Gray\">\
+             <FITSKeyword name=\"IMAGETYP\" value=\"'Light Frame'\" comment=\"\"/></Image>\
              <Image geometry=\"{second}\" sampleFormat=\"UInt16\" colorSpace=\"Gray\"/>\
              </xisf>"
         );
