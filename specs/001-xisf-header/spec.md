@@ -40,13 +40,13 @@ a `Header` back into an XISF container. Header-only — it never touches pixel d
   zero-filled data block — was removed; it could not preserve real pixel data.)
 - **FR-7 File I/O.** `read_from_file` reads only the preamble + XML (never pixel
   data). `update_file(path, edit)` edits a file's header in place, byte-exact:
-  it splices only the changed `<FITSKeyword>`/`<Property>` elements into the
-  original bytes, preserves unmodeled XML and the attached data block verbatim
-  (a no-op edit reproduces the file byte-for-byte), and recomputes the `<Image
-  location>` offset when the header length changes. It takes no `StructuralHints`.
-  Layouts it cannot splice safely (zero or multiple attachments) return
-  `Unsupported`. (Superseded: the earlier `write_to_file`, which rewrote a
-  container from `StructuralHints` and zero-filled data, was removed.)
+  it splices only changed `<FITSKeyword>`/`<Property>` elements and attachment
+  locations into the original bytes, preserves unmodeled XML and every attached
+  data block verbatim, and recomputes all attachment offsets when XML length
+  changes. It takes no `StructuralHints`. One `<Image>` with an attachment is
+  required; overlapping/out-of-bounds blocks return `Unsupported`. (Superseded:
+  the earlier `write_to_file`, which rewrote a container from `StructuralHints`
+  and zero-filled data, was removed.)
 - **FR-8 Native image geometry.** The parse pass also reads the `<Image>`
   element's `geometry` attribute (`dim1:…:dimN:channel-count`, N ≥ 1, XISF
   §8.3 integer forms). `image_geometry()` returns `None` for no `<Image>`,
@@ -66,8 +66,8 @@ a `Header` back into an XISF container. Header-only — it never touches pixel d
 - `image_geometry()` reads a file's native geometry without `NAXISn` keywords;
   malformed geometry and multiple images are errors, never guessed dimensions.
 - A no-op `update_file` reproduces the input file byte-for-byte; an edit changes
-  only the intended keyword/property (plus the offset) while unmodeled XML and
-  the attached data survive intact.
+  only the intended keyword/property and attachment locations while unmodeled XML,
+  gaps, and every attachment data block survive intact.
 - A bare-name `get`/`set`/`remove` on a repeated keyword returns `Ambiguous`;
   `(name, n)` and `get_all`/`count` address the repeats.
 - Batch mutations are atomic; typed getters read values; invalid names are rejected.

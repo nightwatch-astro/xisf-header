@@ -99,11 +99,9 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     /// [`Header::update_file`](crate::Header::update_file) cannot safely
-    /// splice this file's XML: the common case is exactly one `<Image
-    /// location="attachment:OFFSET:SIZE">` element. Multiple attachments
-    /// (e.g. a `Thumbnail` alongside the `Image`), no attachment at all, or a
-    /// self-closing `<Image/>` that needs new child elements inserted are
-    /// rejected rather than risking data loss.
+    /// splice this file's XML or attachment data, such as when an attachment
+    /// block overlaps the header/another block or extends past end-of-file,
+    /// or a self-closing `<Image/>` needs new child elements.
     #[error("unsupported XISF layout for update_file: {0}")]
     Unsupported(String),
 }

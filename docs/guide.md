@@ -129,11 +129,11 @@ without touching its pixel data or unmodeled XML.
 [`Header::update_file`](https://docs.rs/xisf-header/latest/xisf_header/struct.Header.html#method.update_file)
 reads a file's header, applies an edit closure, and splices the result back
 into the file — byte-exact and data-preserving. Everything outside the
-edited `<FITSKeyword>`/`<Property>` elements (unmodeled XML, whitespace, the
-attached pixel data) survives untouched, and a no-op edit reproduces the
-file byte-for-byte. If the edit changes the header's length, the `<Image
-location>` offset is recomputed and the original data moves (unchanged) to
-the new offset — `SIZE` never changes.
+edited `<FITSKeyword>`/`<Property>` elements and attachment locations (unmodeled
+XML, whitespace, and all attachment data blocks) survives untouched, and a
+no-op edit reproduces the file byte-for-byte. If the edit changes the XML
+length, every attachment offset is recomputed and blocks move unchanged in
+file order; `SIZE` never changes, and gaps between blocks are preserved.
 
 ```rust
 # use xisf_header::{Header, StructuralHints};
@@ -150,9 +150,10 @@ Header::update_file(&path, |h| {
 # Ok::<(), xisf_header::Error>(())
 ```
 
-`update_file` targets the common single-image layout: exactly one `<Image
-location="attachment:…">` element. A file with zero or multiple attachments
-(e.g. a `Thumbnail` alongside the `Image`) is rejected with
+`update_file` requires exactly one `<Image>` element with an attachment
+location. Other elements may also use attachment locations (for example, a
+`<Thumbnail>`); inline/embedded locations need no relocation. Overlapping or
+out-of-bounds attachment blocks are rejected with
 [`Error::Unsupported`](https://docs.rs/xisf-header/latest/xisf_header/enum.Error.html#variant.Unsupported)
 rather than risking data loss.
 
