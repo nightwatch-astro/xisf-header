@@ -144,9 +144,8 @@ struct OpenProperty {
 }
 
 /// Byte spans of the modeled elements in a parsed XML header, plus the
-/// single attachment location if the layout is one [`crate::writer`]'s
-/// byte-exact `update_file` splice can target. Spans are byte offsets into
-/// the XML `&str` passed to [`parse_xml_with_index`].
+/// attachment locations needed for byte-exact updates. Spans are byte offsets
+/// into the XML `&str` passed to [`parse_xml_with_index`].
 pub(crate) struct XmlIndex {
     /// Span of each named `<FITSKeyword>` element, in document order —
     /// aligned 1:1 with [`Header::keywords`] by index, since both are built
@@ -155,20 +154,24 @@ pub(crate) struct XmlIndex {
     /// Span of each id'd `<Property>` element, in document order, paired
     /// with its id (nameless `<Property>`s are skipped, like keywords).
     pub property_spans: Vec<(String, usize, usize)>,
-    /// The data-bearing element's location and insertion point, or an error
-    /// reason when the document's attachment layout isn't one the splice
-    /// path can safely target.
+    /// The image insertion point and every attachment location, or an error
+    /// reason when the image layout cannot be safely targeted.
     pub image: std::result::Result<ImageInfo, String>,
 }
 
-/// Where a single `<Image location="attachment:OFFSET:SIZE">` element's
-/// attachment lives, and where to splice in newly-appended elements.
-pub(crate) struct ImageInfo {
-    /// Span of the `attachment:OFFSET:SIZE` text (excluding the surrounding
-    /// quotes) within the `location` attribute.
+/// One attachment-located element's data block.
+#[derive(Clone, Copy)]
+pub(crate) struct AttachmentInfo {
+    /// Span of the `attachment:OFFSET:SIZE` text (excluding quotes) in XML.
     pub location_span: (usize, usize),
     pub offset: usize,
     pub size: usize,
+}
+
+/// Where the single `<Image>` element's children can receive appended
+/// keywords/properties, and all attachment locations in the document.
+pub(crate) struct ImageInfo {
+    pub attachments: Vec<AttachmentInfo>,
     /// Byte offset just before `</Image>`, where new `<FITSKeyword>`/
     /// `<Property>` elements are appended. `None` when `<Image>` is
     /// self-closing and so has no child content to insert into.
@@ -192,11 +195,7 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
 
     let mut image_count = 0usize;
     let mut image_end_start: Option<usize> = None;
-    // (is_image, location value span, offset, size), for every element
-    // (other than FITSKeyword/Property) carrying a valid `attachment:N:N`
-    // `location` attribute — used to reject layouts with zero or multiple
-    // attachments.
-    let mut locations: Vec<(bool, usize, usize, usize, usize)> = Vec::new();
+    let mut locations: Vec<(bool, AttachmentInfo)> = Vec::new();
 
     loop {
         let start = reader.buffer_position() as usize;
@@ -206,6 +205,11 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
             Event::Empty(e) => {
                 let local = e.local_name();
                 let tag = local.as_ref();
+                if tag.eq_ignore_ascii_case(b"Image") {
+                    image_count += 1;
+                    header.geometry.observe_image(|| image_geometry_attr(&e));
+                }
+                record_location(xml, start, end, tag, &mut locations);
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     if let Some(kw) = parse_keyword(&e)? {
                         header.keywords.push(kw);
@@ -217,17 +221,16 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
                         property_spans.push((id.clone(), start, end));
                         header.properties.insert(id, prop);
                     }
-                } else {
-                    if tag.eq_ignore_ascii_case(b"Image") {
-                        image_count += 1;
-                        header.geometry.observe_image(|| image_geometry_attr(&e));
-                    }
-                    record_location(xml, start, end, tag, &mut locations);
                 }
             }
             Event::Start(e) => {
                 let local = e.local_name();
                 let tag = local.as_ref();
+                if tag.eq_ignore_ascii_case(b"Image") {
+                    image_count += 1;
+                    header.geometry.observe_image(|| image_geometry_attr(&e));
+                }
+                record_location(xml, start, end, tag, &mut locations);
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     if let Some(kw) = parse_keyword(&e)? {
                         header.keywords.push(kw);
@@ -241,12 +244,6 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
                         has_value_attr,
                         span_start: start,
                     });
-                } else {
-                    if tag.eq_ignore_ascii_case(b"Image") {
-                        image_count += 1;
-                        header.geometry.observe_image(|| image_geometry_attr(&e));
-                    }
-                    record_location(xml, start, end, tag, &mut locations);
                 }
             }
             Event::Text(t) => {
@@ -286,7 +283,7 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
         }
     }
 
-    let image = resolve_image(image_count, &locations, image_end_start);
+    let image = resolve_image(image_count, locations, image_end_start);
     Ok((
         header,
         XmlIndex {
@@ -298,15 +295,13 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
 }
 
 /// If `tag` carries a `location="attachment:OFFSET:SIZE"` attribute, record
-/// it. Only called for elements other than `FITSKeyword`/`Property`, which
-/// never legitimately carry `location` (and whose attribute *values* could
-/// otherwise coincidentally contain the text `location=`).
+/// it. Only called for elements other than FITSKeyword/Property.
 fn record_location(
     xml: &str,
     start: usize,
     end: usize,
     tag: &[u8],
-    locations: &mut Vec<(bool, usize, usize, usize, usize)>,
+    locations: &mut Vec<(bool, AttachmentInfo)>,
 ) {
     let Some((value_start, value_end)) =
         find_attr_value_span(&xml.as_bytes()[start..end], b"location")
@@ -314,52 +309,54 @@ fn record_location(
         return;
     };
     let (abs_start, abs_end) = (start + value_start, start + value_end);
-    let Some((offset, size)) = xml
-        .get(abs_start..abs_end)
-        .and_then(parse_attachment_location)
-    else {
+    let Some(raw) = xml.get(abs_start..abs_end) else {
+        return;
+    };
+    let Some((offset, size)) = parse_attachment_location(raw) else {
+        if raw.starts_with("attachment:") {
+            locations.push((
+                tag.eq_ignore_ascii_case(b"Image"),
+                AttachmentInfo {
+                    location_span: (abs_start, abs_end),
+                    offset: usize::MAX,
+                    size: 0,
+                },
+            ));
+        }
         return;
     };
     locations.push((
         tag.eq_ignore_ascii_case(b"Image"),
-        abs_start,
-        abs_end,
-        offset,
-        size,
+        AttachmentInfo {
+            location_span: (abs_start, abs_end),
+            offset,
+            size,
+        },
     ));
 }
 
-/// Decide whether the document has a splice-able single attachment: exactly
-/// one `<Image>` element, carrying the document's one `location="attachment:
-/// …">` attribute.
+/// Resolve the single image and retain every attachment-located element.
 fn resolve_image(
     image_count: usize,
-    locations: &[(bool, usize, usize, usize, usize)],
-    image_end_start: Option<usize>,
+    locations: Vec<(bool, AttachmentInfo)>,
+    insertion_point: Option<usize>,
 ) -> std::result::Result<ImageInfo, String> {
-    if image_count == 0 {
-        return Err("no <Image> element found".to_owned());
+    if image_count != 1 {
+        return Err(if image_count == 0 {
+            "no <Image> element found".to_owned()
+        } else {
+            format!("found {image_count} <Image> elements; update_file supports exactly one")
+        });
     }
-    if image_count > 1 {
-        return Err(format!(
-            "found {image_count} <Image> elements; update_file supports exactly one"
-        ));
+    if !locations.iter().any(|(is_image, _)| *is_image) {
+        return Err("the <Image> element has no attachment location".to_owned());
     }
-    if locations.len() != 1 {
-        return Err(format!(
-            "found {} attachment location(s); update_file supports exactly one",
-            locations.len()
-        ));
-    }
-    let (is_image, value_start, value_end, offset, size) = locations[0];
-    if !is_image {
-        return Err("the attachment location is not on the <Image> element".to_owned());
+    if locations.iter().any(|(_, info)| info.offset == usize::MAX) {
+        return Err("malformed attachment location".to_owned());
     }
     Ok(ImageInfo {
-        location_span: (value_start, value_end),
-        offset,
-        size,
-        insertion_point: image_end_start,
+        attachments: locations.into_iter().map(|(_, info)| info).collect(),
+        insertion_point,
     })
 }
 

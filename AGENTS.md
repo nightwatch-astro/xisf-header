@@ -51,9 +51,9 @@ docs/
   (de)serialization. Prefer mature, pure-Rust crates (no C/sys — MSVC-safe).
 - Keyword access is strict: a bare name must be unique or accessors return
   `Error::Ambiguous`; repeats are addressed with an `(name, n)` key.
-- Header-only in what it *models*: keyword/property values, never pixel
-  data. `update_file` does move the attached data block's raw bytes (to keep
-  a file byte-exact after an edit), but never interprets or decodes them.
+- Header-only in what it *models*: keyword/property values, never pixel data.
+  `update_file` moves every attached data block's raw bytes unchanged while
+  preserving gaps and file order, but never interprets or decodes them.
 - Keep it simple and idiomatic; small, focused modules.
 
 ## MSRV

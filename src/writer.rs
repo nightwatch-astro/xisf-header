@@ -122,24 +122,22 @@ impl Header {
 
     /// Read a file's header, apply `edit`, and splice the result back into
     /// the file in place: byte-exact and data-preserving. Every byte outside
-    /// the edited `<FITSKeyword>`/`<Property>` elements — unmodeled XML
-    /// (`Metadata`, `Resolution`, thumbnails, …), whitespace, and the
-    /// attached data block — survives untouched. A no-op edit reproduces the
-    /// input file byte-for-byte. If the header's XML length changes, the
-    /// `<Image location="attachment:OFFSET:SIZE">` offset is recomputed and
-    /// the original data bytes are moved (unchanged) to the new offset;
-    /// `SIZE` never changes.
+    /// the edited `<FITSKeyword>`/`<Property>` elements and attachment
+    /// locations — unmodeled XML, whitespace, and attachment data blocks —
+    /// survives untouched. A no-op edit reproduces the input file byte-for-byte.
+    /// If the XML length changes, every `attachment:OFFSET:SIZE` location is
+    /// recomputed and all attachment blocks are moved unchanged in file order;
+    /// their sizes are never changed.
     ///
-    /// This requires the common single-image layout: exactly one `<Image
-    /// location="attachment:…">` element. A file with zero or multiple
-    /// attachments (e.g. a `Thumbnail` alongside the `Image`), or whose edit
-    /// needs to add elements to a self-closing `<Image/>`, is rejected with
+    /// This requires exactly one `<Image>` element with an attachment location.
+    /// Other elements may also use attachments; inline/embedded locations are
+    /// left alone. Overlapping or out-of-bounds blocks, and additions to a
+    /// self-closing `<Image/>`, are rejected with
     /// [`Error::Unsupported`](crate::Error::Unsupported) rather than risking
-    /// data loss.
+    /// data loss. Bytes between attachment blocks remain in their original
+    /// order.
     ///
-    /// The write is atomic — a sibling temp file is renamed over the target
-    /// — and follows symlinks (a symlinked `path` stays a symlink to the same
-    /// target) and preserves the target's unix permission mode.
+    /// The write is atomic and preserves the target's unix permission mode.
     ///
     /// # Errors
     ///

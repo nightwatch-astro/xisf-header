@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Bug Fixes
+
+* update every attachment location when editing a header with multiple data blocks
+
 ## [0.4.4](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.3...v0.4.4) (2026-10-04)
 
 

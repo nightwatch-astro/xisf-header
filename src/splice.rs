@@ -17,7 +17,7 @@ use crate::error::{Error, Result};
 use crate::header::Header;
 use crate::keyword::FitsKeyword;
 use crate::property::Property;
-use crate::reader::{self, ImageInfo};
+use crate::reader::{self, AttachmentInfo, ImageInfo};
 use crate::value::Value;
 
 const INFALLIBLE: &str = "writing XML to an in-memory buffer cannot fail";
@@ -73,11 +73,13 @@ pub(crate) fn update_file<P: AsRef<Path>>(
         .iter()
         .map(|r| r.bytes.len() as isize - (r.end - r.start) as isize)
         .sum();
-
+    validate_attachment_layout(&image.attachments, xml_end, &original)?;
     if content_delta != 0 {
-        regions.push(relocate_attachment(content_delta, &image)?);
+        regions.extend(relocate_attachments(content_delta, &image.attachments)?);
         regions.sort_by_key(|r| r.start);
     }
+
+    validate_regions(&regions, xml_bytes.len())?;
 
     let new_xml = splice(xml_bytes, &regions);
     write_container(path, &original, xml_start, xml_end, bom, &image, &new_xml)
@@ -192,39 +194,61 @@ fn match_keywords<'a>(
     (kept, after[j..].iter().collect())
 }
 
-/// Recompute the `attachment:OFFSET:SIZE` location text so the offset tracks
-/// the header's length change. The new data start is the original offset
-/// shifted by the total header delta — `content_delta` plus the location
-/// text's own length change — which keeps the header↔data gap and any BOM
-/// intact without needing to know either. The offset's digit width feeds
-/// back into that delta, so converge by fixed-point iteration (like the
-/// two-pass render in [`crate::writer`]).
-fn relocate_attachment(content_delta: isize, image: &ImageInfo) -> Result<Region> {
-    let (loc_start, loc_end) = image.location_span;
-    let old_loc_len = loc_end - loc_start;
-
-    let mut offset = image.offset.saturating_add_signed(content_delta); // guess: ignore loc_delta
+/// Recompute every attachment location using the final XML length delta.
+/// Each location's digit-width change contributes to the same delta, so
+/// iterate until the rendered locations and resulting offsets agree.
+fn relocate_attachments(
+    content_delta: isize,
+    attachments: &[AttachmentInfo],
+) -> Result<Vec<Region>> {
+    let mut total_delta = content_delta;
     for _ in 0..16 {
-        let text = format!("attachment:{offset}:{}", image.size);
-        let loc_delta = text.len() as isize - old_loc_len as isize;
-        let needed_offset: usize = image
-            .offset
-            .checked_add_signed(content_delta + loc_delta)
-            .ok_or_else(|| {
-                Error::Unsupported("edit shifted the attachment offset below zero".to_owned())
-            })?;
-        if needed_offset == offset {
-            return Ok(Region {
-                start: loc_start,
-                end: loc_end,
-                bytes: text.into_bytes(),
-            });
+        let regions = attachments
+            .iter()
+            .map(|attachment| relocate_attachment(total_delta, attachment))
+            .collect::<Result<Vec<_>>>()?;
+        let locations_delta: isize = regions
+            .iter()
+            .map(|region| region.bytes.len() as isize - (region.end - region.start) as isize)
+            .sum();
+        let needed_delta = content_delta + locations_delta;
+        if needed_delta == total_delta {
+            return Ok(regions);
         }
-        offset = needed_offset;
+        total_delta = needed_delta;
     }
     Err(Error::Unsupported(
-        "attachment offset did not converge while recomputing the header length".to_owned(),
+        "attachment offsets did not converge while recomputing the header length".to_owned(),
     ))
+}
+
+/// Render one location at an offset shifted by the final header length delta.
+fn relocate_attachment(total_delta: isize, attachment: &AttachmentInfo) -> Result<Region> {
+    let offset = attachment
+        .offset
+        .checked_add_signed(total_delta)
+        .ok_or_else(|| {
+            Error::Unsupported("edit shifted the attachment offset below zero".to_owned())
+        })?;
+    Ok(Region {
+        start: attachment.location_span.0,
+        end: attachment.location_span.1,
+        bytes: format!("attachment:{offset}:{}", attachment.size).into_bytes(),
+    })
+}
+
+/// Reject out-of-range or overlapping splice regions before indexing XML.
+fn validate_regions(regions: &[Region], xml_len: usize) -> Result<()> {
+    let mut end = 0;
+    for region in regions {
+        if region.start > region.end || region.end > xml_len || region.start < end {
+            return Err(Error::Unsupported(
+                "attachment or edited XML spans overlap or exceed the header".to_owned(),
+            ));
+        }
+        end = region.end;
+    }
+    Ok(())
 }
 
 /// Apply non-overlapping `regions` (sorted by `start`) to `xml`, copying
@@ -241,11 +265,36 @@ fn splice(xml: &[u8], regions: &[Region]) -> Vec<u8> {
     out
 }
 
-/// Assemble the final container and write it atomically: preamble (with the
-/// new XML length; signature and reserved bytes preserved verbatim) + the
-/// `bom` bytes (empty when the source had none) + the spliced XML + the
-/// original gap/data/trailing bytes, moved verbatim to sit right after the
-/// (possibly relocated) header.
+fn validate_attachment_layout(
+    attachments: &[AttachmentInfo],
+    xml_end: usize,
+    original: &[u8],
+) -> Result<()> {
+    let mut ranges = Vec::with_capacity(attachments.len());
+    for attachment in attachments {
+        let end = attachment
+            .offset
+            .checked_add(attachment.size)
+            .filter(|&end| end <= original.len())
+            .ok_or_else(|| {
+                Error::Unsupported("attachment location/size is out of bounds".to_owned())
+            })?;
+        if attachment.offset < xml_end {
+            return Err(Error::Unsupported(
+                "attachment offset overlaps the XML header".to_owned(),
+            ));
+        }
+        ranges.push((attachment.offset, end));
+    }
+    ranges.sort_unstable_by_key(|&(start, _)| start);
+    if ranges.windows(2).any(|pair| pair[1].0 < pair[0].1) {
+        return Err(Error::Unsupported(
+            "attachment data blocks overlap".to_owned(),
+        ));
+    }
+    Ok(())
+}
+/// Assemble the final container and move each attachment block unchanged.
 fn write_container(
     path: &Path,
     original: &[u8],
@@ -255,37 +304,35 @@ fn write_container(
     image: &ImageInfo,
     new_xml: &[u8],
 ) -> Result<()> {
-    let gap_start = xml_end;
-    let data_start = image.offset;
-    let data_end = data_start
-        .checked_add(image.size)
-        .filter(|&e| e <= original.len())
-        .ok_or_else(|| {
-            Error::Unsupported("attachment location/size is out of bounds".to_owned())
-        })?;
-    if data_start < gap_start {
-        return Err(Error::Unsupported(
-            "attachment offset overlaps the XML header".to_owned(),
-        ));
-    }
-    let gap = &original[gap_start..data_start];
-    let data = &original[data_start..data_end];
-    let trailing = &original[data_end..];
+    let mut attachments: Vec<_> = image
+        .attachments
+        .iter()
+        .map(|attachment| (attachment.offset, attachment.offset + attachment.size))
+        .collect();
+    attachments.sort_unstable_by_key(|&(start, _)| start);
 
+    let mut out = Vec::with_capacity(16 + bom.len() + new_xml.len() + original.len() - xml_end);
+    out.extend_from_slice(&original[0..8]);
     let header_len = bom.len() + new_xml.len();
-    let mut out = Vec::with_capacity(16 + header_len + gap.len() + data.len() + trailing.len());
-    out.extend_from_slice(&original[0..8]); // signature, unchanged
-    out.extend_from_slice(&u32::try_from(header_len).unwrap_or(u32::MAX).to_le_bytes());
-    out.extend_from_slice(&original[12..xml_start]); // reserved bytes, preserved verbatim
+    out.extend_from_slice(
+        &u32::try_from(header_len)
+            .map_err(|_| {
+                Error::Unsupported("rewritten XML header exceeds the supported length".to_owned())
+            })?
+            .to_le_bytes(),
+    );
+    out.extend_from_slice(&original[12..xml_start]);
     out.extend_from_slice(bom);
     out.extend_from_slice(new_xml);
-    out.extend_from_slice(gap);
-    out.extend_from_slice(data);
-    out.extend_from_slice(trailing);
-
+    let mut cursor = xml_end;
+    for (start, end) in attachments {
+        out.extend_from_slice(&original[cursor..start]);
+        out.extend_from_slice(&original[start..end]);
+        cursor = end;
+    }
+    out.extend_from_slice(&original[cursor..]);
     atomic_write(path, &out)
 }
-
 /// Write `bytes` to `path` atomically via a sibling temp file + rename.
 /// Follows symlinks (resolves `path` to its canonical target and replaces
 /// that, so a symlink stays a symlink), preserves the target's unix

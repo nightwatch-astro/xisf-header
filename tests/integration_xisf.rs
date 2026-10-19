@@ -223,6 +223,115 @@ fn check_regime(label: &str, n_keywords: usize, n_properties: usize) {
     std::fs::remove_file(&path).ok();
 }
 
+fn multi_attachment_xisf(keywords: &str, image: &[u8], thumbnail: &[u8]) -> Vec<u8> {
+    const OFFSET_WIDTH: usize = 12;
+    const IMAGE_PLACEHOLDER: &str = "IIIIIIIIIIII";
+    const THUMB_PLACEHOLDER: &str = "TTTTTTTTTTTT";
+    let template = format!(
+        "<xisf><Image location=\"attachment:{IMAGE_PLACEHOLDER}:{}\">\n{keywords}\n</Image>\n\
+         <Thumbnail location=\"attachment:{THUMB_PLACEHOLDER}:{}\"/></xisf>",
+        image.len(),
+        thumbnail.len(),
+    );
+    let image_offset = format!("{:0width$}", 16 + template.len(), width = OFFSET_WIDTH);
+    let thumbnail_offset = format!(
+        "{:0width$}",
+        16 + template.len() + image.len(),
+        width = OFFSET_WIDTH
+    );
+    let xml = template
+        .replace(IMAGE_PLACEHOLDER, &image_offset)
+        .replace(THUMB_PLACEHOLDER, &thumbnail_offset);
+    let mut container = Vec::with_capacity(16 + xml.len() + image.len() + thumbnail.len());
+    container.extend_from_slice(b"XISF0100");
+    container.extend_from_slice(&u32::try_from(xml.len()).unwrap().to_le_bytes());
+    container.extend_from_slice(&[0; 4]);
+    container.extend_from_slice(xml.as_bytes());
+    container.extend_from_slice(image);
+    container.extend_from_slice(thumbnail);
+    container
+}
+
+fn attachment_locations(container: &[u8]) -> Vec<(usize, usize)> {
+    let xml_len = u32::from_le_bytes(container[8..12].try_into().unwrap()) as usize;
+    let xml = std::str::from_utf8(&container[16..16 + xml_len]).unwrap();
+    xml.split("attachment:")
+        .skip(1)
+        .map(|value| {
+            let location = &value[..value.find('\"').unwrap()];
+            let (offset, size) = location.split_once(':').unwrap();
+            (offset.parse().unwrap(), size.parse().unwrap())
+        })
+        .collect()
+}
+
+fn assert_attachment_data(container: &[u8], expected: &[&[u8]]) {
+    let locations = attachment_locations(container);
+    assert_eq!(locations.len(), expected.len());
+    for ((offset, size), bytes) in locations.into_iter().zip(expected) {
+        assert_eq!(size, bytes.len());
+        assert_eq!(&container[offset..offset + size], *bytes);
+    }
+}
+
+#[test]
+fn multiple_attachments_survive_growing_and_shrinking_edits() {
+    let image = ramp_data(128);
+    let thumbnail: Vec<u8> = (0..37).map(|n| (255 - n) as u8).collect();
+    let original = multi_attachment_xisf(
+        r#"<FITSKeyword name="GAIN" value="1" comment=""/>"#,
+        &image,
+        &thumbnail,
+    );
+    let path = std::env::temp_dir().join(format!(
+        "xisf-header-multi-attachments-{}.xisf",
+        std::process::id()
+    ));
+    let old_locations = attachment_locations(&original);
+    assert!(old_locations[1].0 > old_locations[0].0);
+    assert_attachment_data(&original, &[image.as_slice(), thumbnail.as_slice()]);
+
+    std::fs::write(&path, &original).unwrap();
+    Header::update_file(&path, |header| {
+        header.set(
+            "OBJECT",
+            "a deliberately long value that grows the XML header",
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let grown = std::fs::read(&path).unwrap();
+    let grown_locations = attachment_locations(&grown);
+    assert_eq!(
+        grown_locations.len(),
+        2,
+        "both locations must parse after growth"
+    );
+    assert!(grown_locations[0].0 > old_locations[0].0);
+    assert!(grown_locations[1].0 > old_locations[1].0);
+    assert_attachment_data(&grown, &[image.as_slice(), thumbnail.as_slice()]);
+
+    std::fs::write(&path, &original).unwrap();
+    Header::update_file(&path, |header| {
+        header.remove("GAIN")?;
+        Ok(())
+    })
+    .unwrap();
+    let shrunk = std::fs::read(&path).unwrap();
+    let shrunk_locations = attachment_locations(&shrunk);
+    assert_eq!(
+        shrunk_locations.len(),
+        2,
+        "both locations must parse after shrinking"
+    );
+    assert!(shrunk_locations[0].0 < old_locations[0].0);
+    assert!(shrunk_locations[1].0 < old_locations[1].0);
+    assert_attachment_data(&shrunk, &[image.as_slice(), thumbnail.as_slice()]);
+    Header::read_from_file(&path).unwrap();
+
+    std::fs::remove_file(&path).ok();
+}
+
 #[test]
 fn small_header_regime() {
     check_regime("small", 4, 2);
