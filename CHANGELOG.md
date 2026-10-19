@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.5](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.4...v0.4.5) (2026-10-19)
+
+
+### Bug Fixes
+
+* relocate every XISF attachment when editing headers ([#33](https://github.com/nightwatch-astro/xisf-header/issues/33)) ([f1f818f](https://github.com/nightwatch-astro/xisf-header/commit/f1f818fed0a71dafd59081e2d4980ad5594f1276))
+
 ## [0.4.4](https://github.com/nightwatch-astro/xisf-header/compare/v0.4.3...v0.4.4) (2026-10-04)
 
 
