@@ -288,8 +288,8 @@ fn multi_attachment_xisf_with_gap_and_reordered_data(image: &[u8], thumbnail: &[
         thumbnail.len(),
     );
     let xml_len = template.len();
-    let thumbnail_offset = 16 + xml_len + gap.len();
-    let image_offset = thumbnail_offset + thumbnail.len();
+    let thumbnail_offset = 16 + xml_len;
+    let image_offset = thumbnail_offset + thumbnail.len() + gap.len();
     let xml = template
         .replace(
             THUMB_PLACEHOLDER,
@@ -306,8 +306,8 @@ fn multi_attachment_xisf_with_gap_and_reordered_data(image: &[u8], thumbnail: &[
     container.extend_from_slice(&u32::try_from(xml.len()).unwrap().to_le_bytes());
     container.extend_from_slice(&[0; 4]);
     container.extend_from_slice(xml.as_bytes());
-    container.extend_from_slice(gap);
     container.extend_from_slice(thumbnail);
+    container.extend_from_slice(gap);
     container.extend_from_slice(image);
     container
 }
