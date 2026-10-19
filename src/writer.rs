@@ -137,7 +137,9 @@ impl Header {
     /// data loss. Bytes between attachment blocks remain in their original
     /// order.
     ///
-    /// The write is atomic and preserves the target's unix permission mode.
+    /// The write is atomic: a sibling temp file is renamed over the target.
+    /// It follows symlinks, keeping a symlinked path pointed at the same target,
+    /// and preserves the target's unix permission mode.
     ///
     /// # Errors
     ///

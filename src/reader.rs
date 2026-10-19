@@ -209,7 +209,9 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
                     image_count += 1;
                     header.geometry.observe_image(|| image_geometry_attr(&e));
                 }
-                record_location(xml, start, end, tag, &mut locations);
+                if !tag.eq_ignore_ascii_case(b"FITSKeyword") {
+                    record_location(xml, start, end, tag, &mut locations);
+                }
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     if let Some(kw) = parse_keyword(&e)? {
                         header.keywords.push(kw);
@@ -230,7 +232,9 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
                     image_count += 1;
                     header.geometry.observe_image(|| image_geometry_attr(&e));
                 }
-                record_location(xml, start, end, tag, &mut locations);
+                if !tag.eq_ignore_ascii_case(b"FITSKeyword") {
+                    record_location(xml, start, end, tag, &mut locations);
+                }
                 if tag.eq_ignore_ascii_case(b"FITSKeyword") {
                     if let Some(kw) = parse_keyword(&e)? {
                         header.keywords.push(kw);
@@ -294,8 +298,8 @@ pub(crate) fn parse_xml_with_index(xml: &str) -> Result<(Header, XmlIndex)> {
     ))
 }
 
-/// If `tag` carries a `location="attachment:OFFSET:SIZE"` attribute, record
-/// it. Only called for elements other than FITSKeyword/Property.
+/// Record attachment locations on non-FITSKeyword elements. FITSKeyword
+/// attributes may contain arbitrary text resembling `location=`.
 fn record_location(
     xml: &str,
     start: usize,
